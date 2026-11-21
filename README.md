@@ -11,7 +11,8 @@ A macOS mod for Football Manager 27 that turns the game into a living manager ca
 | 目录 | 内容 |
 | --- | --- |
 | `bridge/` | 注入 FM27 进程的小型动态库，通过 il2cpp 接口读写游戏数据 |
-| `tools/` | `fm27.py`：查询接口的客户端（阵容、人物摘要、原始查询） |
+| `engine/` | 世界引擎（Python 标准库 + SQLite）：存档识别、人物快照、本机接口（`python3 -m engine`） |
+| `tools/` | `fm27.py`：桥的命令行工具（阵容、人物、更衣室、原始查询） |
 | `docs/` | 方案、协议笔记 |
 
 ## 构建
@@ -52,6 +53,18 @@ python3 tools/fm27.py squad 18000230
 ```
 
 接口只监听 `127.0.0.1:27270`，每次启动生成新令牌。
+
+## 世界引擎
+
+游戏运行、读入生涯后：
+
+```bash
+python3 -m engine            # 启动引擎接口 127.0.0.1:27271（令牌在数据目录 engine.json）
+python3 -m engine career     # 当前生涯
+python3 -m engine person 01049638
+```
+
+每个生涯一个数据库：`FM27Real/careers/<主教练 UID>-<开档标识>.sqlite`。
 
 ## 环境
 
