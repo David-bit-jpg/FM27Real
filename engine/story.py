@@ -178,7 +178,7 @@ class StoryEngine:
             for row in v.get(field) or []:
                 p = (row or {}).get("props") or {}
                 ref, rating = _ref(p.get("rylp")), p.get("  52")
-                if ref and isinstance(rating, (int, float)):
+                if ref and isinstance(rating, (int, float)) and rating > 0:  # 0 = in the squad, no rating
                     ratings[ref] = round(float(rating), 1)
                     side[ref] = which
         goals: dict[str, list[str]] = {}
