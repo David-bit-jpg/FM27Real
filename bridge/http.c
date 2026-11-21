@@ -5,6 +5,7 @@
 //
 //   GET /status                         {"ready": bool, "guid": "..."}
 //   GET /seen                           records the interface showed recently (newest last)
+//   GET /focus                          {"person": "01049638" | null} — the profile being viewed
 //   GET /query?id=010baef4&props=eman,dinu
 //   GET /query?id=010baef4&type=PersonReference     every property of that type
 //
@@ -129,6 +130,14 @@ static void handle(int fd) {
     if (!strcmp(target, "/status")) {
         char body[128];
         snprintf(body, sizeof body, "{\"ready\":%s,\"guid\":\"%08x\"}", tap_ready() ? "true" : "false", tap_guid());
+        respond(fd, 200, body);
+        return;
+    }
+    if (!strcmp(target, "/focus")) {
+        uint32_t p = tap_focus(0x01);
+        char body[64];
+        if (p) snprintf(body, sizeof body, "{\"person\":\"%08x\"}", p);
+        else snprintf(body, sizeof body, "{\"person\":null}");
         respond(fd, 200, body);
         return;
     }

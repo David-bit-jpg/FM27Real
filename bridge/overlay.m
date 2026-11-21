@@ -13,8 +13,12 @@
 
 #include "log.h"
 #include "overlay.h"
+#include "tap.h"
 
 static NSView *g_panel;      // container (rounded, shadowed)
+static NSButton *g_chat_button;  // shown on a player's profile page
+static uint32_t g_focus;     // person whose profile is open (0 if none)
+static NSString *g_focus_name, *g_focus_face;  // name and portrait data URL
 static WKWebView *g_web;
 static BOOL g_visible;
 static const CGFloat kPanelWidth = 440, kMargin = 12;
@@ -62,7 +66,15 @@ static void set_visible(BOOL shown) {
 
 // YES when the event belongs to the panel rather than the game.
 static BOOL route_to_panel(NSEvent *e) {
-    if (!g_visible || !g_panel) return NO;
+    if (!g_panel) return NO;
+    BOOL button_hit = NO;
+    if (g_chat_button && !g_chat_button.hidden && e.window == g_panel.window &&
+        e.type != NSEventTypeKeyDown && e.type != NSEventTypeKeyUp && e.type != NSEventTypeFlagsChanged) {
+        NSPoint p = [g_chat_button.superview convertPoint:e.locationInWindow fromView:nil];
+        button_hit = NSPointInRect(p, g_chat_button.frame);
+    }
+    if (button_hit) return YES;  // the button handles its own clicks; the game must not see them
+    if (!g_visible) return NO;
     switch (e.type) {
     case NSEventTypeKeyDown:
     case NSEventTypeKeyUp:
@@ -143,13 +155,91 @@ static NSString *test_page(void) {
             "input{flex:1;border:0;border-radius:8px;padding:10px 12px;background:#0d1426;color:#fff;font-size:14px}"
             "button{border:0;border-radius:8px;padding:0 16px;background:#d6246e;color:#fff;font-weight:600}"
             "</style></head><body>"
-            "<header>FM27Real · 面板测试<small>⌘J 开关 · Esc 关闭 · 输入中文和空格，看游戏会不会被触发</small></header>"
+            "<header style='display:flex;align-items:center;gap:12px'><img id='face' style='width:56px;height:56px;border-radius:50%;"
+            "object-fit:cover;background:#25365f;display:none'><div><span id='who'>主教练手机</span>"
+            "<small>⌘J 开关 · Esc 关闭 · 聊天功能在 2d/2e 接上</small></div></header>"
             "<div id='log'><div class='msg'>在下面输入一句话试试。</div></div>"
             "<form onsubmit=\"var i=document.getElementById('t');if(!i.value)return false;"
             "var d=document.createElement('div');d.className='msg me';d.textContent=i.value;"
             "document.getElementById('log').appendChild(d);i.value='';return false\">"
             "<input id='t' placeholder='输入消息…' autofocus><button>发送</button></form>"
+            "<script>function setPerson(n,img){document.getElementById('who').textContent=n;"
+            "var f=document.getElementById('face');if(img){f.src=img;f.style.display='block'}else{f.style.display='none'}}</script>"
             "</body></html>";
+}
+
+static NSString *js_string(NSString *s) {
+    NSData *d = [NSJSONSerialization dataWithJSONObject:@[ s ?: @"" ] options:0 error:nil];
+    NSString *arr = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+    return [arr substringWithRange:NSMakeRange(1, arr.length - 2)];  // strip [ ]
+}
+
+static void show_focus_in_panel(void) {
+    NSString *js = g_focus ? [NSString stringWithFormat:@"setPerson(%@,%@)", js_string(g_focus_name), js_string(g_focus_face)]
+                           : @"setPerson('主教练手机','')";
+    [g_web evaluateJavaScript:js completionHandler:nil];
+}
+
+static void chat_clicked(id self, SEL _cmd, id sender) {
+    (void)self; (void)_cmd; (void)sender;
+    show_focus_in_panel();
+    set_visible(YES);
+}
+
+static void set_button_title(NSString *title) {
+    NSDictionary *attrs = @{NSForegroundColorAttributeName : NSColor.whiteColor,
+                            NSFontAttributeName : [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]};
+    g_chat_button.attributedTitle = [[NSAttributedString alloc] initWithString:title attributes:attrs];
+    NSSize size = [g_chat_button.attributedTitle size];
+    NSView *host = g_chat_button.superview;
+    CGFloat w = size.width + 32, h = 30;
+    g_chat_button.frame = NSMakeRect(host.bounds.size.width - w - 24, host.bounds.size.height - 112 - h, w, h);
+}
+
+// Looks up the focused person's name and portrait off the main thread
+// (queries wait for the game's main thread, so they must not run on it).
+static void load_focus(uint32_t person) {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        uint32_t props[2] = {0x6e616d65 /* eman */, 0x756e6964 /* dinu */};
+        char *json = tap_query(person, props, 2);
+        NSString *name = nil, *face = nil;
+        if (json) {
+            NSDictionary *d = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:json length:strlen(json)]
+                                                              options:0 error:nil];
+            free(json);
+            id n = d[@"eman"];
+            name = [n isKindOfClass:NSDictionary.class] ? n[@"text"] : ([n isKindOfClass:NSString.class] ? n : nil);
+            name = [name stringByReplacingOccurrencesOfString:@"\u200b" withString:@""];
+            NSNumber *uid = [d[@"dinu"] isKindOfClass:NSNumber.class] ? d[@"dinu"] : nil;
+            if (uid) {
+                NSString *path = [NSString stringWithFormat:
+                    @"%@/Library/Application Support/Sports Interactive/Football Manager 27/graphics/faces/face_%lld.png",
+                    NSHomeDirectory(), uid.longLongValue];
+                NSData *png = [NSData dataWithContentsOfFile:path];
+                if (png) face = [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]];
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (g_focus != person) return;
+            g_focus_name = name ?: @"球员";
+            g_focus_face = face ?: @"";
+            set_button_title([NSString stringWithFormat:@"💬 和 %@ 私聊", g_focus_name]);
+            if (g_visible) show_focus_in_panel();
+        });
+    });
+}
+
+static void poll_focus(void) {
+    uint32_t p = tap_focus(0x01);
+    if (p == g_focus) return;
+    g_focus = p;
+    g_focus_name = g_focus_face = nil;
+    g_chat_button.hidden = !p;
+    if (p) {
+        set_button_title(@"💬 私聊");
+        load_focus(p);
+        log_line("overlay: profile of %08x", p);
+    }
 }
 
 static void install_on_main(int attempt) {
@@ -177,6 +267,23 @@ static void install_on_main(int attempt) {
     [g_web loadHTMLString:test_page() baseURL:nil];
     [g_panel addSubview:g_web];
     [host addSubview:g_panel positioned:NSWindowAbove relativeTo:nil];
+
+    // Chat button (top right, under FM's bars); hidden until a profile is open.
+    Class target_cls = objc_allocateClassPair(NSObject.class, "FM27RealButtonTarget", 0);
+    class_addMethod(target_cls, @selector(chatClicked:), (IMP)chat_clicked, "v@:@");
+    objc_registerClassPair(target_cls);
+    static id button_target;
+    button_target = [target_cls new];
+    g_chat_button = [NSButton buttonWithTitle:@"" target:button_target action:@selector(chatClicked:)];
+    g_chat_button.bordered = NO;
+    g_chat_button.wantsLayer = YES;
+    g_chat_button.layer.backgroundColor = [NSColor colorWithSRGBRed:0.84 green:0.14 blue:0.43 alpha:1].CGColor;
+    g_chat_button.layer.cornerRadius = 15;
+    g_chat_button.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
+    g_chat_button.hidden = YES;
+    [host addSubview:g_chat_button positioned:NSWindowAbove relativeTo:nil];
+    set_button_title(@"💬 私聊");
+    [NSTimer scheduledTimerWithTimeInterval:0.4 repeats:YES block:^(NSTimer *t) { (void)t; poll_focus(); }];
 
     Class app_cls = object_getClass(NSApp), win_cls = object_getClass(w);
     BOOL a = swap_send_event(app_cls, NSApplication.class, (IMP)app_send_event, &g_app_send_unity, &g_app_send_base);

@@ -115,12 +115,61 @@ uint32_t fourcc_parse(const char *s) {
 
 // Channel key -> property for UI traffic (tap.log readability).
 #define KEY_SLOTS 65536
-static struct { u64 key; uint32_t prop; } g_keys[KEY_SLOTS];
+static struct { u64 key; uint32_t prop, record; } g_keys[KEY_SLOTS];
 
-static void key_put(u64 key, uint32_t prop) {
+static void key_put(u64 key, uint32_t prop, uint32_t record) {
     uint32_t h = (uint32_t)(key ^ (key >> 29)) & (KEY_SLOTS - 1);
     for (int i = 0; i < 64; i++, h = (h + 1) & (KEY_SLOTS - 1))
-        if (!g_keys[h].key || g_keys[h].key == key) { g_keys[h].key = key; g_keys[h].prop = prop; return; }
+        if (!g_keys[h].key || g_keys[h].key == key) {
+            g_keys[h].key = key;
+            g_keys[h].prop = prop;
+            g_keys[h].record = record;
+            return;
+        }
+}
+
+static uint32_t key_record(u64 key) {
+    uint32_t h = (uint32_t)(key ^ (key >> 29)) & (KEY_SLOTS - 1);
+    for (int i = 0; i < 64; i++, h = (h + 1) & (KEY_SLOTS - 1)) {
+        if (g_keys[h].key == key) return g_keys[h].record;
+        if (!g_keys[h].key) break;
+    }
+    return 0;
+}
+
+// Open UI channels per database record. A record with far more open channels
+// than any other is what the player is looking at (a profile page opens 100+
+// channels on one person; a squad list opens ~20 on each of many).
+#define OPEN_SLOTS 8192
+static struct { uint32_t record; int open; } g_open[OPEN_SLOTS];
+static pthread_mutex_t g_open_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void open_add(uint32_t record, int delta) {
+    if (!record) return;
+    pthread_mutex_lock(&g_open_lock);
+    uint32_t h = (record * 2654435761u) & (OPEN_SLOTS - 1);
+    for (int i = 0; i < 64; i++, h = (h + 1) & (OPEN_SLOTS - 1))
+        if (!g_open[h].record || g_open[h].record == record) {
+            g_open[h].record = record;
+            g_open[h].open += delta;
+            if (g_open[h].open < 0) g_open[h].open = 0;
+            break;
+        }
+    pthread_mutex_unlock(&g_open_lock);
+}
+
+uint32_t tap_focus(uint8_t kind) {
+    uint32_t best = 0;
+    int best_n = 0, second = 0;
+    pthread_mutex_lock(&g_open_lock);
+    for (int i = 0; i < OPEN_SLOTS; i++) {
+        if (!g_open[i].record || (g_open[i].record >> 24) != kind) continue;
+        int n = g_open[i].open;
+        if (n > best_n) { second = best_n; best_n = n; best = g_open[i].record; }
+        else if (n > second) second = n;
+    }
+    pthread_mutex_unlock(&g_open_lock);
+    return best_n >= 40 && best_n >= 2 * second ? best : 0;
 }
 
 static uint32_t key_get(u64 key) {
@@ -518,14 +567,21 @@ static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
         int n = span_copy(cp, cn, 16, ch, sizeof ch);
         // target: u8 pair count, then (u32 code, u32 value) pairs
         int pairs = tl > 0 ? target[0] : 0;
+        uint32_t record = 0;
         for (int p = 0; p < pairs && 9 + 8 * p <= tl; p++) {
             uint32_t code, val;
             memcpy(&code, target + 1 + 8 * p, 4);
             memcpy(&val, target + 5 + 8 * p, 4);
-            if (code == CODE_GUID && val) g_guid = val;
+            if (code == CODE_GUID && val && val != g_guid) {  // a career was (re)loaded
+                g_guid = val;
+                pthread_mutex_lock(&g_open_lock);
+                memset(g_open, 0, sizeof g_open);
+                pthread_mutex_unlock(&g_open_lock);
+            }
             if (code == CODE_011 && pairs == 3) g_record_type = val;
-            if (code == CODE_FERD) note_seen(val);
+            if (code == CODE_FERD) { note_seen(val); record = val; }
         }
+        open_add(record, n);
         char th[200], cc[16];
         hex(target, tl, th, sizeof th);
         tap_printf("O target(%d)=%s channels=%d\n", tn, th, cn);
@@ -535,7 +591,7 @@ static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
             memcpy(&prop, ch + 16 * i, 4);
             memcpy(&gen, ch + 16 * i + 4, 4);
             memcpy(&key, ch + 16 * i + 8, 8);
-            key_put(key, prop);
+            key_put(key, prop, record);
             if (gen > g_max_gen && gen < 0x40000000u) g_max_gen = gen;
             fourcc_string(prop, cc);
             tap_printf("  %016llx %s gen=%u\n", key, cc, gen);
@@ -544,6 +600,24 @@ static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
         t_busy = 0;
     }
     g_orig_open(a, b, c, d, e, f, g, h);
+}
+
+// PerformChannelActions(Span<ChannelAction>): counts the UI closing channels.
+static void hook_actions(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
+    u64 x[8] = {a, b, c, d, e, f, g, h};
+    const void *ap;
+    int an;
+    span_arg(x, 1, &ap, &an);
+    static uint8_t acts[24 * 4096];
+    int n = span_copy(ap, an, 24, acts, sizeof acts);
+    for (int i = 0; i < n; i++) {
+        int32_t mode;
+        u64 key;
+        memcpy(&key, acts + 24 * i, 8);
+        memcpy(&mode, acts + 24 * i + 16, 4);
+        if (mode == g_mode_close && !is_ours(key)) open_add(key_record(key), -1);
+    }
+    g_orig_actions(a, b, c, d, e, f, g, h);
 }
 
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
@@ -661,7 +735,7 @@ void tap_install(void) {
     int n = patch_vtable(receiver, response, (void *)hook_response, &g_orig_response);
     n += patch_vtable(receiver, event, (void *)hook_event, &g_orig_event);
     n += patch_vtable(wrapper, open, (void *)hook_open, &g_orig_open);
-    patch_vtable(wrapper, actions, NULL, &g_orig_actions);  // lookup only
+    n += patch_vtable(wrapper, actions, (void *)hook_actions, &g_orig_actions);
     n += patch_vtable(wrapper, tick, (void *)hook_tick, &g_orig_tick);
     log_line("tap: installed (%d vtable slots)", n);
 }
@@ -671,6 +745,7 @@ void tap_install(void) { log_line("tap: only supported on Apple Silicon"); }
 int tap_ready(void) { return 0; }
 char *tap_query(uint32_t record, const uint32_t *props, int n) { (void)record; (void)props; (void)n; return NULL; }
 int tap_seen(uint32_t *out, int cap) { (void)out; (void)cap; return 0; }
+uint32_t tap_focus(uint8_t kind) { (void)kind; return 0; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }
 uint32_t fourcc_parse(const char *s) { return (uint32_t)strtoul(s + 1, NULL, 16); }

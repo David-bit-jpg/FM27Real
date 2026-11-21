@@ -16,6 +16,10 @@ char *tap_query(uint32_t record, const uint32_t *props, int n);
 // Records the interface opened recently (oldest first). Returns the count.
 int tap_seen(uint32_t *out, int cap);
 
+// The record of the given kind (0x01 person, 0x03 club, 0x18 team) the player
+// is looking at, judged from open UI channels; 0 when none stands out.
+uint32_t tap_focus(uint8_t kind);
+
 // Session id of the loaded career (0 if none).
 uint32_t tap_guid(void);
 
