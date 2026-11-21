@@ -7,13 +7,17 @@ World memory follows FM's saves, so loading an older save never brings back
 memories of things that have not happened yet:
 
     careers/<career>/memory/<save name>.sqlite          live memory of that save file
-    careers/<career>/checkpoints/<save name>/<count>_<date>.sqlite
+    careers/<career>/checkpoints/<save name>/<file time>_<date>.sqlite
                                                          snapshot taken when FM saved
 
-- FM saves (the save count goes up): a checkpoint is written.
-- "Save as" a new name: the new save starts from the current memory.
+FM's save files (games/<save name>.fm) are watched; their modification time
+identifies a save exactly (FM's in-game save counter only refreshes on load).
+
+- The save file is rewritten: a checkpoint is written, keyed by the file time.
+- "Save as" (another save file is written instead): that save continues
+  from the current memory.
 - A save is loaded (FM's session id changes): the checkpoint with the same
-  save count is restored; without one, the newest checkpoint not later than
+  file time is restored; without one, the newest checkpoint not later than
   the game date; without that, memory starts empty. The memory being
   replaced is kept as a .before-load copy.
 """
@@ -27,10 +31,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .bridge import DATA_DIR, Bridge, BridgeUnavailable, _text
+from .bridge import DATA_DIR, FM_DIR, Bridge, BridgeUnavailable, _text
 from .store import Store
 
 CAREERS_DIR = DATA_DIR / "careers"
+GAMES_DIR = FM_DIR / "games"
+SETTLE_SECONDS = 3  # a save file must be unchanged this long before it counts as written
+IGNORED_SAVES = ("last save overwrite backup",)
 KEEP_CHECKPOINTS = 30  # per save file
 
 
@@ -44,6 +51,7 @@ class Career:
     team_name: str
     save_name: str
     save_count: int | None
+    save_time: float | None  # modification time of the save file the memory matches
     start: str
     date: str
     session: str  # FM's id for the loaded game; changes on every load
@@ -72,10 +80,12 @@ def _file_name(save: str) -> str:
 class CareerTracker:
     """Tracks the loaded career and save; re-reads the game record at most every few seconds."""
 
-    def __init__(self, bridge: Bridge, refresh_seconds: float = 3.0, root: Path = CAREERS_DIR):
+    def __init__(self, bridge: Bridge, refresh_seconds: float = 3.0, root: Path = CAREERS_DIR,
+                 games: Path = GAMES_DIR):
         self.bridge = bridge
         self.refresh_seconds = refresh_seconds
         self.root = root
+        self.games = games
         self._career: Career | None = None
         self._checked = 0.0
         self._lock = threading.Lock()
@@ -86,6 +96,25 @@ class CareerTracker:
 
     def _checkpoint_dir(self, key: str, save: str) -> Path:
         return self.root / key / "checkpoints" / _file_name(save)
+
+    def _save_file_time(self, save: str) -> float | None:
+        try:
+            return (self.games / f"{save}.fm").stat().st_mtime
+        except OSError:
+            return None
+
+    def _written_saves(self, since: float) -> list[tuple[float, str]]:
+        """Save files modified after `since` and settled, newest first."""
+        out = []
+        now = time.time()
+        for f in self.games.glob("*.fm"):
+            try:
+                t = f.stat().st_mtime
+            except OSError:
+                continue
+            if t > since + 0.5 and now - t >= SETTLE_SECONDS and f.stem not in IGNORED_SAVES:
+                out.append((t, f.stem))
+        return sorted(out, reverse=True)
 
     # --- tracking -----------------------------------------------------------------
     def current(self) -> Career:
@@ -101,14 +130,17 @@ class CareerTracker:
                 return self._career
             save = _save_name(game.get("save_name", ""))
             count = game.get("save_count") if isinstance(game.get("save_count"), int) else None
+            c.date = game["date"]
             if session != c.session:
                 self._on_load(c, save, count, game["date"], session)
-            elif save != c.save_name:
-                self._on_save_as(c, save, count)
-            elif count is not None and count != c.save_count:
-                c.save_count = count
-                self._checkpoint(c)
-            c.date = game["date"]
+            else:
+                written = self._written_saves(c.save_time or 0)
+                if written:
+                    t, name = written[0]
+                    if name != c.save_name:
+                        self._on_save_as(c, name, None)
+                    c.save_time = t
+                    self._checkpoint(c)
             c.store.set_meta("last_date", c.date)
             return c
 
@@ -130,7 +162,7 @@ class CareerTracker:
         career = Career(
             key=key, manager_id=game["manager"], manager_name=_text(manager.get("eman")) or "",
             manager_uid=uid, team_id=game["team"], team_name=self.bridge.name(game["team"]),
-            save_name=save, save_count=count, start=start, date=game["date"], session="",
+            save_name=save, save_count=count, save_time=None, start=start, date=game["date"], session="",
             store=Store(self._memory_path(key, save)),
         )
         self._on_load(career, save, count, game["date"], session)
@@ -149,12 +181,10 @@ class CareerTracker:
 
     # --- save events -----------------------------------------------------------------
     def _checkpoint(self, c: Career) -> None:
-        if c.save_count is None:
+        if c.save_time is None:
             return
         folder = self._checkpoint_dir(c.key, c.save_name)
-        for old in folder.glob(f"{c.save_count:05d}_*.sqlite"):  # this count was saved again: new timeline
-            old.unlink()
-        c.store.backup_to(folder / f"{c.save_count:05d}_{c.date}.sqlite")
+        c.store.backup_to(folder / f"{int(c.save_time)}_{c.date}.sqlite")
         checkpoints = sorted(folder.glob("*.sqlite"))
         for old in checkpoints[:-KEEP_CHECKPOINTS]:
             old.unlink()
@@ -169,14 +199,19 @@ class CareerTracker:
         c.store = Store(target)
         c.save_name, c.save_count = save, count
         c.store.set_meta("save_name", save)
-        self._checkpoint(c)
 
     def _on_load(self, c: Career, save: str, count: int | None, date: str, session: str) -> None:
         """A save was loaded: bring memory to the state that matches it."""
         target = self._memory_path(c.key, save)
         folder = self._checkpoint_dir(c.key, save)
-        exact = sorted(folder.glob(f"{count:05d}_*.sqlite")) if count is not None else []
-        source = exact[-1] if exact else None
+        file_time = self._save_file_time(save)
+        exact = []
+        if file_time is not None:
+            for p in folder.glob("*.sqlite"):
+                stamp = p.stem.split("_", 1)[0]
+                if stamp.isdigit() and abs(int(stamp) - file_time) <= 2:
+                    exact.append(p)
+        source = sorted(exact)[-1] if exact else None
         if source is None:
             last = None
             if target.exists():
@@ -185,7 +220,8 @@ class CareerTracker:
                 if probe is not c.store:
                     probe.close()
             if last and last > date:  # memory is ahead of this save: rewind
-                earlier = [p for p in sorted(folder.glob("*.sqlite")) if p.stem.split("_", 1)[-1] <= date]
+                earlier = sorted((p for p in folder.glob("*.sqlite") if p.stem.split("_", 1)[-1] <= date),
+                                 key=lambda p: p.stem.split("_", 1)[-1])
                 source = earlier[-1] if earlier else "empty"
         if source is not None:
             c.store.close()
@@ -202,4 +238,5 @@ class CareerTracker:
             c.store.close()
             c.store = Store(target)
         c.save_name, c.save_count, c.date, c.session = save, count, date, session
+        c.save_time = file_time
         c.store.set_meta("last_date", date)
