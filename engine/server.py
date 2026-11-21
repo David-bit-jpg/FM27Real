@@ -6,6 +6,7 @@ Every request needs the token from engine.json in the data folder, as an
     GET  /api/status                 bridge state, loaded career, settings
     GET  /api/person/<id>            person snapshot (?refresh=1 to re-read FM)
     GET  /api/messages/<id>          private conversation with that person
+    POST /api/messages/<id>          {"text": "..."} -> the person's reply (takes a few seconds)
     GET  /api/settings               {"language": "zh" | "en"}
     POST /api/settings               {"language": "en"}
     GET  /face/<uid>                 FM portrait (PNG) from the graphics folder
@@ -21,9 +22,10 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import snapshot
+from . import dialogue, snapshot
 from .bridge import DATA_DIR, GRAPHICS, Bridge, BridgeUnavailable
 from .career import CareerTracker
+from .model import ModelError, provider_from_settings
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
@@ -96,6 +98,8 @@ def make_handler(engine: Engine):
                 if method == "GET" and m:
                     career = engine.careers.current()
                     return self._json(200, career.store.messages(m.group(1)))
+                if method == "POST" and m:
+                    return self._send_message(m.group(1))
                 m = re.fullmatch(r"/face/(\d+)", path)
                 if method == "GET" and m:
                     png = GRAPHICS / f"faces/face_{m.group(1)}.png"
@@ -105,6 +109,24 @@ def make_handler(engine: Engine):
                 return self._json(404, {"error": "unknown path"})
             except BridgeUnavailable as e:
                 return self._json(503, {"error": str(e)})
+
+        def _send_message(self, person_id: str) -> None:
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except ValueError:
+                return self._json(400, {"error": "invalid JSON"})
+            text = str(body.get("text") or "").strip()
+            if not text:
+                return self._json(400, {"error": "text required"})
+            career = engine.careers.current()
+            snap = snapshot.get(engine.bridge, career, person_id)
+            try:
+                reply = dialogue.converse(provider_from_settings(engine.settings), career, snap, text[:2000],
+                                          engine.settings["language"])
+            except ModelError as e:
+                return self._json(502, {"error": f"model: {e}"})
+            self._json(200, reply)
 
         def _status(self) -> None:
             out = {"settings": engine.settings, "bridge": False, "career": None}

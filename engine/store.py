@@ -135,6 +135,16 @@ class Store:
             self._db.commit()
             return int(cur.lastrowid)
 
+    # --- canon and memories -------------------------------------------------------
+    def canon(self, person_id: str) -> list[dict]:
+        return [dict(r) for r in self._exec(
+            "SELECT key, value, game_date FROM canon WHERE person_id = ? ORDER BY id", (person_id,))]
+
+    def memories(self, person_id: str, limit: int = 30) -> list[dict]:
+        rows = self._exec("SELECT game_date, text, source FROM memories WHERE person_id = ? "
+                          "ORDER BY id DESC LIMIT ?", (person_id, limit))
+        return [dict(r) for r in reversed(rows)]
+
     # --- events -----------------------------------------------------------------
     def add_event(self, kind: str, game_date: str | None, payload: dict) -> None:
         self._exec("INSERT INTO events (game_date, kind, payload) VALUES (?, ?, ?)",
