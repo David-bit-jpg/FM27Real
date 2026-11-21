@@ -24,6 +24,14 @@ int tap_seen(uint32_t *out, int cap);
 // is looking at, judged from open UI channels; 0 when none stands out.
 uint32_t tap_focus(uint8_t kind);
 
+// Events the UI sent to the engine since sequence number `since`, as a JSON
+// array [{seq, id, target, data}] (hex). Keeps the last 256.
+char *tap_events_json(uint64_t since);
+
+// Hex of the most recent target the UI opened for record type `type` (the
+// value of its " 011" pair), or NULL.
+char *tap_last_target(uint32_t type);
+
 // Session id of the loaded career (0 if none).
 uint32_t tap_guid(void);
 

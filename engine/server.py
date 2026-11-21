@@ -33,6 +33,7 @@ from . import dialogue, snapshot
 from .bridge import DATA_DIR, GRAPHICS, Bridge, BridgeUnavailable, _text
 from .career import CareerTracker
 from .model import PRESETS, ModelError, detect_provider, provider_from_settings
+from .native import NativeSync
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
@@ -98,6 +99,7 @@ class Engine:
         self.careers = CareerTracker(self.bridge)
         self.settings = load_settings()
         self.token = secrets.token_hex(16)
+        self.native = NativeSync(self.bridge)
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
@@ -269,8 +271,24 @@ def write_api_file(engine: Engine) -> Path:
     return path
 
 
+def background(engine: Engine, interval: float = 3.0) -> None:
+    """Keeps the world in step with the game even when nobody uses the panel:
+    notices saves and loads (memory checkpoints) and native FM interactions."""
+    import time
+    while True:
+        try:
+            career = engine.careers.current()
+            engine.native.poll(career)
+        except BridgeUnavailable:
+            pass
+        except Exception as e:  # never let the loop die
+            print(f"background: {type(e).__name__}: {e}", file=sys.stderr)
+        time.sleep(interval)
+
+
 def serve() -> None:
     engine = Engine()
+    threading.Thread(target=background, args=(engine,), daemon=True, name="background").start()
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(engine))  # never reachable from the network
     path = write_api_file(engine)
     print(f"FM27Real engine on http://127.0.0.1:{PORT} (token in {path})", file=sys.stderr)

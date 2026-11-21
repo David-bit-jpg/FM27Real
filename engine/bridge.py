@@ -160,6 +160,14 @@ class Bridge:
     def seen(self) -> list[str]:
         return self._get("/seen")
 
+    def events(self, since: int = 0) -> list[dict]:
+        """Events the game's interface sent to its engine after sequence number `since`."""
+        return self._get(f"/events?since={since}")
+
+    def last_target(self, record_type: int) -> str | None:
+        """The most recent target the interface opened for a record type (" 011" value)."""
+        return self._get(f"/target?type={record_type}").get("target")
+
     def query(self, record: str, codes: list[str]) -> dict:
         """Values of the given property codes for one record (missing = not applicable)."""
         out: dict = {}

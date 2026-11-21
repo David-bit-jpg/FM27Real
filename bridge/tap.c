@@ -629,6 +629,69 @@ static void note_seen(uint32_t record) {
     pthread_mutex_unlock(&g_seen_lock);
 }
 
+// --- UI -> engine events and recent targets (for the world engine) -------------
+#define EVENT_RING 256
+static struct { uint64_t seq; uint32_t id; int tlen, dlen; uint8_t target[96]; uint8_t data[1024]; } g_events[EVENT_RING];
+static uint64_t g_event_seq;
+static pthread_mutex_t g_event_lock = PTHREAD_MUTEX_INITIALIZER;
+#define TYPE_SLOTS 256
+static struct { int len; uint8_t bytes[96]; } g_last_target[TYPE_SLOTS];
+
+static void remember_event(uint32_t id, const uint8_t *t, int tl, const uint8_t *d, int dl) {
+    pthread_mutex_lock(&g_event_lock);
+    int slot = (int)(g_event_seq % EVENT_RING);
+    g_events[slot].seq = ++g_event_seq;
+    g_events[slot].id = id;
+    g_events[slot].tlen = tl < 96 ? tl : 96;
+    g_events[slot].dlen = dl < 1024 ? dl : 1024;
+    memcpy(g_events[slot].target, t, (size_t)g_events[slot].tlen);
+    memcpy(g_events[slot].data, d, (size_t)g_events[slot].dlen);
+    pthread_mutex_unlock(&g_event_lock);
+}
+
+static void remember_target(const uint8_t *t, int tl) {
+    if (tl < 9 || tl > 96) return;
+    uint32_t code, type;
+    memcpy(&code, t + 1, 4);
+    memcpy(&type, t + 5, 4);
+    if (code != CODE_011 || type >= TYPE_SLOTS) return;
+    pthread_mutex_lock(&g_event_lock);
+    g_last_target[type].len = tl;
+    memcpy(g_last_target[type].bytes, t, (size_t)tl);
+    pthread_mutex_unlock(&g_event_lock);
+}
+
+char *tap_events_json(uint64_t since) {
+    JsonBuf j = {0};
+    char buf[3000];
+    json_raw(&j, "[");
+    int first = 1;
+    pthread_mutex_lock(&g_event_lock);
+    uint64_t oldest = g_event_seq > EVENT_RING ? g_event_seq - EVENT_RING + 1 : 1;
+    for (uint64_t q = (since + 1 > oldest ? since + 1 : oldest); q <= g_event_seq; q++) {
+        int slot = (int)((q - 1) % EVENT_RING);
+        char th[200], dh[2100];
+        hex(g_events[slot].target, g_events[slot].tlen, th, sizeof th);
+        hex(g_events[slot].data, g_events[slot].dlen, dh, sizeof dh);
+        snprintf(buf, sizeof buf, "%s{\"seq\":%llu,\"id\":%u,\"target\":\"%s\",\"data\":\"%s\"}", first ? "" : ",",
+                 (unsigned long long)g_events[slot].seq, g_events[slot].id, th, dh);
+        json_raw(&j, buf);
+        first = 0;
+    }
+    pthread_mutex_unlock(&g_event_lock);
+    json_raw(&j, "]");
+    return j.data;
+}
+
+char *tap_last_target(uint32_t type) {
+    if (type >= TYPE_SLOTS) return NULL;
+    char th[200] = "";
+    pthread_mutex_lock(&g_event_lock);
+    hex(g_last_target[type].bytes, g_last_target[type].len, th, sizeof th);
+    pthread_mutex_unlock(&g_event_lock);
+    return th[0] ? strdup(th) : NULL;
+}
+
 // --- hooks ---------------------------------------------------------------------
 // SendDataResponse(Span<ulong> keys, Span<uint> generations, Span<byte> data)
 static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
@@ -714,6 +777,7 @@ static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
         static uint8_t ch[16 * 4096];
         int tl = span_copy(tp, tn, 1, target, sizeof target);
         int n = span_copy(cp, cn, 16, ch, sizeof ch);
+        remember_target(target, tl);
         // target: u8 pair count, then (u32 code, u32 value) pairs
         int pairs = tl > 0 ? target[0] : 0;
         uint32_t record = 0;
@@ -818,6 +882,16 @@ static void hook_update(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) 
 
 // IGamePlugin.SendEvent(uint id, Span<byte> target, Span<byte> data): UI -> engine events.
 static void hook_send(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
+    {
+        u64 x[8] = {a, b, c, d, e, f, g, h};
+        const void *tp, *dp;
+        int tn, dn;
+        span_arg(x, 2, &tp, &tn);
+        span_arg(x, 4, &dp, &dn);
+        static uint8_t et[96], ed[1024];
+        int etl = span_copy(tp, tn, 1, et, sizeof et), edl = span_copy(dp, dn, 1, ed, sizeof ed);
+        remember_event((uint32_t)b, et, etl, ed, edl);
+    }
     if (g_tap && !t_busy) {
         t_busy = 1;
         u64 x[8] = {a, b, c, d, e, f, g, h};
@@ -973,6 +1047,8 @@ char *tap_query(uint32_t record, const uint32_t *props, int n) { (void)record; (
 char *tap_query_target(const uint8_t *t, int tl, const uint32_t *props, int n) { (void)t; (void)tl; (void)props; (void)n; return NULL; }
 int tap_seen(uint32_t *out, int cap) { (void)out; (void)cap; return 0; }
 uint32_t tap_focus(uint8_t kind) { (void)kind; return 0; }
+char *tap_events_json(uint64_t since) { (void)since; return strdup("[]"); }
+char *tap_last_target(uint32_t type) { (void)type; return NULL; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }
 uint32_t fourcc_parse(const char *s) { return (uint32_t)strtoul(s + 1, NULL, 16); }

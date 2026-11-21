@@ -5,6 +5,8 @@
 //
 //   GET /status                         {"ready": bool, "guid": "..."}
 //   GET /seen                           records the interface showed recently (newest last)
+//   GET /events?since=N                 UI -> engine events after sequence N
+//   GET /target?type=23                 most recent target the UI opened for that record type
 //   GET /focus                          {"person": "01049638" | null} — the profile being viewed
 //   GET /query?id=010baef4&props=eman,dinu
 //   GET /query?id=010baef4&type=PersonReference     every property of that type
@@ -131,6 +133,24 @@ static void handle(int fd) {
     if (!strcmp(target, "/status")) {
         char body[128];
         snprintf(body, sizeof body, "{\"ready\":%s,\"guid\":\"%08x\"}", tap_ready() ? "true" : "false", tap_guid());
+        respond(fd, 200, body);
+        return;
+    }
+    if (!strcmp(target, "/events")) {
+        char since[32] = "0";
+        if (query) param(query, "since", since, sizeof since);
+        char *body = tap_events_json(strtoull(since, NULL, 10));
+        respond(fd, 200, body);
+        free(body);
+        return;
+    }
+    if (!strcmp(target, "/target")) {
+        char type[16] = "";
+        if (!query || !param(query, "type", type, sizeof type)) { respond(fd, 400, "{\"error\":\"type required\"}"); return; }
+        char *hexs = tap_last_target((uint32_t)strtoul(type, NULL, 10));
+        char body[256];
+        snprintf(body, sizeof body, hexs ? "{\"target\":\"%s\"}" : "{\"target\":null}", hexs ? hexs : "");
+        free(hexs);
         respond(fd, 200, body);
         return;
     }
