@@ -1,15 +1,9 @@
-// Data tap: observes the channel traffic between FM's interface and its native
-// game engine, and writes it to tap.log with property names resolved.
+// Data channels: observes the traffic between FM's interface and its native
+// game engine (tap.log), and runs our own queries against the engine.
 //
-// Two virtual methods are hooked by swapping their entry in the class's
-// virtual-method table (ordinary heap data). Game code is never modified, so
-// the hardened runtime's code-signing checks are unaffected.
-//
-//   IGamePlugin.OpenChannels(target, ChannelData[])      UI -> engine: "watch these
-//       (wrapper class FM_GamePlugin_IGamePlugin_NativeWrapper)  properties of this object"
-//   IPluginDataReceiver.SendDataResponse(keys, props, bytes)  engine -> UI: values
-//       (class FM.GamePlugin.GameReceiver)
-//   IPluginDataReceiver.SendEvent(id, bytes)              engine -> UI: events
+// Hooks are installed by swapping entries in classes' virtual-method tables
+// (ordinary heap data); game code is never modified, so the hardened
+// runtime's code-signing checks are unaffected. Protocol: docs/PROTOCOL.md.
 #include "tap.h"
 
 #include <mach/mach.h>
@@ -18,9 +12,10 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
-#include "catalog.h"
 #include "il2cpp_api.h"
+#include "json.h"
 #include "log.h"
 
 #if defined(__aarch64__)
@@ -32,41 +27,34 @@ static Fn8 g_orig_response, g_orig_event, g_orig_open, g_orig_tick, g_orig_actio
 static FILE *g_tap;
 static size_t g_tap_bytes;
 static const size_t kTapLimit = 64u << 20;  // stop logging after 64 MB
-static __thread int t_busy;                 // re-entrancy guard
+static __thread int t_busy;                 // re-entrancy guard for logging
 
-// --- type handles resolved at install time ---------------------------------
-static const MethodInfo *g_typed_value_as_string;
-static size_t g_receiver_list_offset;  // GameReceiver.m_resusableTypedList
-static size_t g_list_items_offset, g_list_size_offset;
-static int g_list_layout_known;
+// --- runtime handles resolved at install time --------------------------------
+static const MethodInfo *g_typed_value_as_string, *g_typed_value_get;
+static Il2CppClass *g_record_ref_class;  // FM.UI.DatabaseRecordReference
+static Il2CppClass *g_string_class;
+static size_t g_record_index_off, g_record_type_off;
+static size_t g_receiver_list_offset;      // GameReceiver.m_resusableTypedList
 static size_t g_receiver_callback_offset;  // GameReceiver.m_onChannelDataChange
+static size_t g_list_items_offset, g_list_size_offset;
 static const MethodInfo *g_open_method, *g_actions_method;
-static int32_t g_close_mode = -1;  // ChannelActionMode.CloseChannel
-static int32_t g_add_node_mode = -1, g_remove_node_mode = -1, g_set_property_mode = -1;
-static int g_action_size;          // sizeof(ChannelAction)
-static u64 g_plugin;               // the IGamePlugin native wrapper instance
-
-// --- active queries ---------------------------------------------------------
-// Our own channels use keys with this prefix so they never collide with the UI's.
-#define OUR_KEY_PREFIX 0xF27E000000000000ull
-#define OUR_KEY_MASK 0xFFFF000000000000ull
-static int is_ours(u64 key) { return (key & OUR_KEY_MASK) == OUR_KEY_PREFIX; }
+static int32_t g_mode_add_node = -1, g_mode_remove_node = -1, g_mode_close = -1, g_mode_set_property = -1;
+static int g_action_size;  // sizeof(ChannelAction)
+static u64 g_plugin;       // the IGamePlugin native wrapper instance
+static struct { int ptr_off, len_off; } g_span = {-1, -1};
 
 #define CODE_011 0x31313020u   // " 011": record type
 #define CODE_GUID 0x47756964u  // "Guid": loaded game session
-#define CODE_FERD 0x64726566u  // "ferd": database record id (high byte = record kind)
-static uint32_t g_guid, g_seen_person, g_seen_club, g_record_type;
-static uint32_t g_max_gen;      // highest generation the UI has used
-static int g_probe_hits;        // responses received for our channels
+#define CODE_FERD 0x64726566u  // "ferd": database record id (high byte = kind)
+static uint32_t g_guid, g_record_type, g_max_gen;
 
-// System.Span<T> layout differs between corlib versions; detected at runtime.
-static struct {
-    int size;  // value size in bytes; > 16 means passed by pointer on arm64
-    int ptr_off, len_off;  // "_reference"/"_pointer" layout
-    int pinnable_off, byte_off;  // portable layout (_pinnable + _byteOffset)
-} g_span = {.ptr_off = -1, .len_off = -1, .pinnable_off = -1, .byte_off = -1};
+// Records the UI has shown recently (newest last), for discovery.
+#define SEEN_MAX 256
+static uint32_t g_seen[SEEN_MAX];
+static int g_seen_count;
+static pthread_mutex_t g_seen_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// --- output ------------------------------------------------------------------
+// --- small helpers -------------------------------------------------------------
 static void tap_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void tap_printf(const char *fmt, ...) {
     if (!g_tap || g_tap_bytes > kTapLimit) return;
@@ -84,11 +72,16 @@ static void hex(const uint8_t *p, int n, char *out, size_t cap) {
     out[o] = 0;
 }
 
+static int safe_read(const void *addr, void *out, size_t n) {
+    mach_vm_size_t got = 0;
+    return mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)addr, n, (mach_vm_address_t)out, &got) ==
+               KERN_SUCCESS && got == n;
+}
+
 // Span<T> arguments arrive as two registers each: data pointer, then length.
-// (Confirmed from raw register dumps; layout fields learned at install time.)
 static void span_arg(const u64 *x, int reg, const void **data, int *len) {
-    u64 pair[2] = {x[reg], x[reg + 1]};
     uint8_t raw[16];
+    u64 pair[2] = {x[reg], x[reg + 1]};
     memcpy(raw, pair, sizeof raw);  // memcpy, not pointer casts: avoids aliasing UB
     void *p;
     int32_t n;
@@ -98,9 +91,7 @@ static void span_arg(const u64 *x, int reg, const void **data, int *len) {
     *len = n;
 }
 
-static int safe_read(const void *addr, void *out, size_t n);
-
-// Copies up to cap bytes of a span into buf; returns bytes copied (0 if unreadable).
+// Copies up to cap bytes of a span; returns elements copied (0 if unreadable).
 static int span_copy(const void *data, int len, size_t elem, void *buf, size_t cap) {
     if (!data || len <= 0) return 0;
     size_t want = (size_t)len * elem;
@@ -108,15 +99,21 @@ static int span_copy(const void *data, int len, size_t elem, void *buf, size_t c
     return safe_read(data, buf, want) ? (int)(want / elem) : 0;
 }
 
-static void fourcc(uint32_t v, char out[16]) {
+void fourcc_string(uint32_t v, char out[16]) {
     char c[4] = {(char)(v & 0xff), (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)};
-    int printable = 1;
-    for (int i = 0; i < 4; i++) if (c[i] < 0x20 || c[i] > 0x7e) printable = 0;
-    if (printable) snprintf(out, 16, "%c%c%c%c", c[0], c[1], c[2], c[3]);
-    else snprintf(out, 16, "#%08x", v);
+    for (int i = 0; i < 4; i++)
+        if (c[i] < 0x20 || c[i] > 0x7e) { snprintf(out, 16, "#%08x", v); return; }
+    snprintf(out, 16, "%c%c%c%c", c[0], c[1], c[2], c[3]);
 }
 
-// Channel key -> property, learned from OpenChannels.
+uint32_t fourcc_parse(const char *s) {
+    if (s[0] == '#') return (uint32_t)strtoul(s + 1, NULL, 16);
+    uint32_t v = 0;
+    for (int i = 0; i < 4 && s[i]; i++) v |= (uint32_t)(uint8_t)s[i] << (8 * i);
+    return v;
+}
+
+// Channel key -> property for UI traffic (tap.log readability).
 #define KEY_SLOTS 65536
 static struct { u64 key; uint32_t prop; } g_keys[KEY_SLOTS];
 
@@ -135,19 +132,29 @@ static uint32_t key_get(u64 key) {
     return 0;
 }
 
-static char *invoke_to_utf8(const MethodInfo *m, void *obj, char *buf, size_t n) {
+static Il2CppObject *invoke0(const MethodInfo *m, void *obj) {
     Il2CppException *exc = NULL;
     Il2CppObject *r = il2cpp_runtime_invoke(m, obj, NULL, &exc);
-    if (exc) { strlcpy(buf, "<exception>", n); return buf; }
-    if (!r) { strlcpy(buf, "null", n); return buf; }
-    return il2cpp_utf8((Il2CppString *)r, buf, n);
+    return exc ? NULL : r;
 }
 
-static void value_string(Il2CppObject *v, char *buf, size_t n) {
+static void typed_value_string(Il2CppObject *v, char *buf, size_t n) {
     if (!v) { strlcpy(buf, "null", n); return; }
     const MethodInfo *m = il2cpp_object_get_virtual_method(v, g_typed_value_as_string);
-    invoke_to_utf8(m ? m : g_typed_value_as_string, v, buf, n);
+    Il2CppObject *s = invoke0(m ? m : g_typed_value_as_string, v);
+    il2cpp_utf8((Il2CppString *)s, buf, n);
     for (char *c = buf; *c; c++) if (*c == '\n' || *c == '\t') *c = ' ';
+}
+
+static int list_items(Il2CppObject *list, Il2CppObject **out, int cap) {
+    uint8_t *arr = NULL;
+    int32_t count = 0;
+    if (!list || !g_list_items_offset ||
+        !safe_read((uint8_t *)list + g_list_items_offset, &arr, sizeof arr) ||
+        !safe_read((uint8_t *)list + g_list_size_offset, &count, sizeof count) || !arr || count <= 0)
+        return 0;
+    if (count > cap) count = cap;
+    return safe_read(arr + 0x20, out, sizeof(void *) * (size_t)count) ? count : 0;  // array data at 0x20
 }
 
 static void learn_list_layout(Il2CppObject *list) {
@@ -159,41 +166,286 @@ static void learn_list_layout(Il2CppObject *list) {
         if (!strcmp(n, "_items")) g_list_items_offset = il2cpp_field_get_offset(f);
         if (!strcmp(n, "_size")) g_list_size_offset = il2cpp_field_get_offset(f);
     }
-    g_list_layout_known = g_list_items_offset && g_list_size_offset ? 1 : -1;
-    log_line("tap: List<TypedValue> layout items@0x%zx size@0x%zx", g_list_items_offset, g_list_size_offset);
+    log_line("tap: List layout items@0x%zx size@0x%zx", g_list_items_offset, g_list_size_offset);
 }
 
-// Reads the values GameReceiver decoded into m_resusableTypedList.
+// Values GameReceiver decoded into m_resusableTypedList (after the original call).
 static int decoded_values(Il2CppObject *receiver, Il2CppObject **out, int cap) {
     Il2CppObject *list = NULL;
     if (!safe_read((uint8_t *)receiver + g_receiver_list_offset, &list, sizeof list) || !list) return 0;
-    if (!g_list_layout_known) learn_list_layout(list);
-    if (g_list_layout_known <= 0) return 0;
-    uint8_t *arr = NULL;
-    int32_t count = 0;
-    if (!safe_read((uint8_t *)list + g_list_items_offset, &arr, sizeof arr) ||
-        !safe_read((uint8_t *)list + g_list_size_offset, &count, sizeof count) || !arr || count <= 0)
-        return 0;
-    if (count > cap) count = cap;
-    return safe_read(arr + 0x20, out, sizeof(void *) * (size_t)count) ? count : 0;  // array data at 0x20
+    if (!g_list_items_offset) learn_list_layout(list);
+    return list_items(list, out, cap);
+}
+
+static int derives_from(Il2CppClass *k, Il2CppClass *base) {
+    for (int depth = 0; k && depth < 32; depth++, k = il2cpp_class_get_parent(k))
+        if (k == base) return 1;
+    return 0;
+}
+
+// --- value -> JSON -------------------------------------------------------------
+// Database records become {"ref":"010baef4"}; lists become arrays; strings have
+// FM's link markup reduced to their visible text; everything else is the
+// value's own string form (numbers and booleans as JSON literals).
+static void encode_value(JsonBuf *j, Il2CppObject *tv, int depth) {
+    if (!tv) { json_raw(j, "null"); return; }
+    const MethodInfo *get = il2cpp_object_get_virtual_method(tv, g_typed_value_get);
+    Il2CppObject *obj = invoke0(get ? get : g_typed_value_get, tv);
+    if (!obj) { json_raw(j, "null"); return; }
+    Il2CppClass *k = il2cpp_object_get_class(obj);
+    const char *kname = il2cpp_class_get_name(k);
+
+    if (!strcmp(kname, "List`1") && depth < 4) {
+        static __thread Il2CppObject *items[4][1024];
+        int n = list_items(obj, items[depth], 1024);
+        json_raw(j, "[");
+        for (int i = 0; i < n; i++) {
+            if (i) json_raw(j, ",");
+            encode_value(j, items[depth][i], depth + 1);
+        }
+        json_raw(j, "]");
+        return;
+    }
+    if (g_record_ref_class && derives_from(k, g_record_ref_class)) {
+        int32_t index = 0, type = 0;
+        safe_read((uint8_t *)obj + g_record_index_off, &index, 4);
+        safe_read((uint8_t *)obj + g_record_type_off, &type, 4);
+        char ref[16];
+        snprintf(ref, sizeof ref, "%08x", ((uint32_t)type << 24) | ((uint32_t)index & 0xffffff));
+        json_raw(j, "{\"ref\":");
+        json_str(j, ref);
+        json_raw(j, ",\"type\":");
+        json_str(j, kname);
+        json_raw(j, "}");
+        return;
+    }
+    static __thread char buf[16384];
+    if (k == g_string_class) {
+        il2cpp_utf8((Il2CppString *)obj, buf, sizeof buf);
+        json_fm_text(j, buf);
+        return;
+    }
+    typed_value_string(tv, buf, sizeof buf);
+    if (!strcmp(kname, "GameDate")) {
+        // Packed as year << 17 | day-of-year (1-based) << 8 | time of day.
+        const char *d1 = strstr(buf, "Data1 = ");
+        unsigned long v = d1 ? strtoul(d1 + 8, NULL, 10) : 0;
+        int year = (int)(v >> 17), doy = (int)((v >> 8) & 0x1ff);
+        if (!year || !doy) { json_raw(j, "null"); return; }
+        static const int mdays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        int leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0, month = 0;
+        while (month < 11 && doy > mdays[month] + (month == 1 && leap)) doy -= mdays[month] + (month == 1 && leap), month++;
+        char date[24];
+        snprintf(date, sizeof date, "%04d-%02d-%02d", year, month + 1, doy);
+        json_str(j, date);
+        return;
+    }
+    if (!strcmp(buf, "True")) json_raw(j, "true");
+    else if (!strcmp(buf, "False")) json_raw(j, "false");
+    else if (json_is_number(buf)) json_raw(j, buf);
+    else if (strstr(buf, kname) == buf || strstr(buf, "Reference")) {
+        json_raw(j, "{\"object\":");
+        json_str(j, kname);
+        json_raw(j, "}");
+    } else {
+        json_str(j, buf);
+    }
+}
+
+// --- queries -------------------------------------------------------------------
+// One query at a time: the HTTP thread fills g_q and waits; the main thread
+// (Tick hook) opens the channels, the response hook collects values, and the
+// Tick hook closes the channels and signals completion.
+#define OUR_KEY_PREFIX 0xF27E000000000000ull
+#define OUR_KEY_MASK 0xFFFF000000000000ull
+#define OUR_ROOT_KEY (OUR_KEY_PREFIX | 0x0000FFFF00000000ull)
+#define QUERY_MAX 2048
+static int is_ours(u64 key) { return (key & OUR_KEY_MASK) == OUR_KEY_PREFIX; }
+
+static struct {
+    pthread_mutex_t lock;   // serialises callers
+    pthread_mutex_t m;      // protects state below
+    pthread_cond_t done_cv;
+    int state;              // 0 idle, 1 pending, 2 open, 3 done
+    uint32_t id;            // query number, part of each key
+    uint32_t target_id;     // ferd
+    uint32_t props[QUERY_MAX];
+    char *values[QUERY_MAX];
+    int n, opened, received;
+    int frames, quiet;      // frames since open / since last response
+} g_q = {.lock = PTHREAD_MUTEX_INITIALIZER, .m = PTHREAD_MUTEX_INITIALIZER, .done_cv = PTHREAD_COND_INITIALIZER};
+
+static u64 query_key(int i) { return OUR_KEY_PREFIX | ((u64)(g_q.id & 0x7fff) << 32) | (u64)i; }
+
+static void put_action(uint8_t *buf, int i, u64 key, u64 extra, int32_t mode) {
+    uint8_t *a = buf + (size_t)g_action_size * (size_t)i;  // ChannelAction { u64 key; u64 additionalKey; i32 mode; }
+    memset(a, 0, (size_t)g_action_size);
+    memcpy(a, &key, 8);
+    memcpy(a + 8, &extra, 8);
+    memcpy(a + 16, &mode, 4);
+}
+
+static void run_actions(uint8_t *buf, int n) {
+    if (n) g_orig_actions(g_plugin, (u64)buf, (u64)n, (u64)g_actions_method, 0, 0, 0, 0);
+}
+
+static void query_open_batch(void) {
+    static int root_added;
+    static uint8_t ch[16 * 256], acts[24 * (2 * 256 + 1)];
+    uint8_t target[32];
+    uint32_t pairs[6] = {CODE_011, g_record_type, CODE_GUID, g_guid, CODE_FERD, g_q.target_id};
+    target[0] = 3;  // u8 pair count, then (code, value) pairs
+    memcpy(target + 1, pairs, sizeof pairs);
+
+    int n = 0, na = 0;
+    if (!root_added) { put_action(acts, na++, OUR_ROOT_KEY, 0, g_mode_add_node); root_added = 1; }
+    for (; n < 256 && g_q.opened < g_q.n; n++, g_q.opened++) {
+        uint32_t prop = g_q.props[g_q.opened], gen = ++g_max_gen;
+        u64 key = query_key(g_q.opened);
+        memcpy(ch + 16 * n, &prop, 4);  // ChannelData { u32 property; u32 generation; u64 key; }
+        memcpy(ch + 16 * n + 4, &gen, 4);
+        memcpy(ch + 16 * n + 8, &key, 8);
+        put_action(acts, na++, key, OUR_ROOT_KEY, g_mode_add_node);  // as the UI does: register the node,
+        put_action(acts, na++, key, (u64)prop, g_mode_set_property);  // then its property, then open
+    }
+    run_actions(acts, na);
+    if (n) g_orig_open(g_plugin, (u64)target, 1 + sizeof pairs, (u64)ch, (u64)n, (u64)g_open_method, 0, 0);
+}
+
+static void query_close(void) {
+    static uint8_t acts[24 * 2 * QUERY_MAX];
+    int na = 0;
+    for (int i = 0; i < g_q.n; i++) {
+        put_action(acts, na++, query_key(i), 0, g_mode_close);
+        put_action(acts, na++, query_key(i), 0, g_mode_remove_node);
+    }
+    run_actions(acts, na);
+}
+
+// Main thread, once per frame.
+static void query_step(void) {
+    pthread_mutex_lock(&g_q.m);
+    if (g_q.state == 1) {
+        query_open_batch();
+        if (g_q.opened >= g_q.n) { g_q.state = 2; g_q.frames = g_q.quiet = 0; }
+    } else if (g_q.state == 2) {
+        g_q.frames++;
+        g_q.quiet++;
+        // Done when every property answered, or nothing new for 30 frames once
+        // replies have started (properties that do not apply never answer).
+        // Large batches can take a while before the first reply arrives.
+        int idle = g_q.received ? g_q.quiet > 30 : g_q.frames > 240;
+        if (g_q.received >= g_q.n || idle || g_q.frames > 900) {
+            query_close();
+            g_q.state = 3;
+            pthread_cond_broadcast(&g_q.done_cv);
+        }
+    }
+    pthread_mutex_unlock(&g_q.m);
+}
+
+// Called from the response hook for keys with our prefix.
+static void query_collect(const u64 *keys, int nk, Il2CppObject **vals, int nv) {
+    pthread_mutex_lock(&g_q.m);
+    for (int i = 0; i < nk && i < nv; i++) {
+        if (!is_ours(keys[i]) || ((keys[i] >> 32) & 0x7fff) != (g_q.id & 0x7fff)) continue;
+        int idx = (int)(keys[i] & 0xffffffff);
+        if (idx < 0 || idx >= g_q.n || g_q.state != 2) continue;
+        JsonBuf j = {0};
+        encode_value(&j, vals[i], 0);
+        if (!g_q.values[idx]) g_q.received++;
+        free(g_q.values[idx]);
+        g_q.values[idx] = j.data;
+        g_q.quiet = 0;
+    }
+    pthread_mutex_unlock(&g_q.m);
+}
+
+int tap_ready(void) { return g_plugin && g_guid && g_record_type && g_orig_tick; }
+
+char *tap_query(uint32_t record, const uint32_t *props, int n) {
+    if (!tap_ready() || n <= 0) return NULL;
+    if (n > QUERY_MAX) n = QUERY_MAX;
+    pthread_mutex_lock(&g_q.lock);
+    pthread_mutex_lock(&g_q.m);
+    g_q.id++;
+    g_q.target_id = record;
+    memcpy(g_q.props, props, sizeof(uint32_t) * (size_t)n);
+    memset(g_q.values, 0, sizeof(char *) * (size_t)n);
+    g_q.n = n;
+    g_q.opened = g_q.received = 0;
+    g_q.state = 1;
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 20;
+    while (g_q.state != 3)
+        if (pthread_cond_timedwait(&g_q.done_cv, &g_q.m, &deadline)) break;  // game paused or minimised
+    int finished = g_q.state == 3;
+
+    JsonBuf j = {0};
+    json_raw(&j, "{");
+    int first = 1;
+    for (int i = 0; i < n; i++) {
+        if (!g_q.values[i]) continue;
+        char code[16];
+        fourcc_string(g_q.props[i], code);
+        if (!first) json_raw(&j, ",");
+        first = 0;
+        json_str(&j, code);
+        json_raw(&j, ":");
+        json_raw(&j, g_q.values[i]);
+        free(g_q.values[i]);
+        g_q.values[i] = NULL;
+    }
+    json_raw(&j, "}");
+    g_q.state = 0;  // an unfinished query's channels stay open; harmless, they only report changes
+    pthread_mutex_unlock(&g_q.m);
+    pthread_mutex_unlock(&g_q.lock);
+    if (!finished) log_line("query: %08x timed out (game not ticking?)", record);
+    return j.data;
+}
+
+int tap_seen(uint32_t *out, int cap) {
+    pthread_mutex_lock(&g_seen_lock);
+    int n = g_seen_count < cap ? g_seen_count : cap;
+    memcpy(out, g_seen + (g_seen_count - n), sizeof(uint32_t) * (size_t)n);
+    pthread_mutex_unlock(&g_seen_lock);
+    return n;
+}
+
+uint32_t tap_guid(void) { return g_guid; }
+
+static void note_seen(uint32_t record) {
+    pthread_mutex_lock(&g_seen_lock);
+    for (int i = 0; i < g_seen_count; i++)
+        if (g_seen[i] == record) {  // move to the end (most recent)
+            memmove(g_seen + i, g_seen + i + 1, sizeof(uint32_t) * (size_t)(g_seen_count - i - 1));
+            g_seen_count--;
+            break;
+        }
+    if (g_seen_count == SEEN_MAX) {
+        memmove(g_seen, g_seen + 1, sizeof(uint32_t) * (SEEN_MAX - 1));
+        g_seen_count--;
+    }
+    g_seen[g_seen_count++] = record;
+    pthread_mutex_unlock(&g_seen_lock);
 }
 
 // --- hooks ---------------------------------------------------------------------
 // SendDataResponse(Span<ulong> keys, Span<uint> generations, Span<byte> data)
-static void probe_record(const u64 *keys, int nk, Il2CppObject **vals, int nv);
-
 static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
+    u64 x[8] = {a, b, c, d, e, f, g, h};
+    const void *kp, *gp, *bp;
+    int kn, gn, bn;
+    span_arg(x, 1, &kp, &kn);
+    static u64 keys[2048];
+    int nk = span_copy(kp, kn, 8, keys, sizeof keys);
+    int ours = 0;
+    for (int i = 0; i < nk; i++) ours += is_ours(keys[i]);
+
     // Responses to our own channels must not reach the UI, which does not know
     // their keys: detach the UI callback for that call only.
-    u64 x0[8] = {a, b, c, d, e, f, g, h};
-    const void *kp0;
-    int kn0;
-    span_arg(x0, 1, &kp0, &kn0);
-    static u64 k0[1024];
-    int nk0 = span_copy(kp0, kn0, 8, k0, sizeof k0);
-    int ours = 0;
-    for (int i = 0; i < nk0; i++) ours += is_ours(k0[i]);
-    if (ours && ours == nk0 && g_receiver_callback_offset) {
+    if (ours && ours == nk && g_receiver_callback_offset) {
         void **cb = (void **)((uint8_t *)a + g_receiver_callback_offset);
         void *saved = *cb;
         *cb = NULL;
@@ -202,42 +454,32 @@ static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h
     } else {
         g_orig_response(a, b, c, d, e, f, g, h);
     }
-    static __thread int recording;  // separate guard: replies may arrive inside our own Tick work
-    if (ours && !recording) {
-        recording = 1;
-        static Il2CppObject *v0[4096];
-        int nv0 = decoded_values((Il2CppObject *)a, v0, 4096);
-        probe_record(k0, nk0, v0, nv0);
-        recording = 0;
+
+    static Il2CppObject *vals[2048];
+    if (ours) {
+        static __thread int collecting;  // replies may arrive inside our own Tick work
+        if (!collecting) {
+            collecting = 1;
+            int nv = decoded_values((Il2CppObject *)a, vals, 2048);
+            query_collect(keys, nk, vals, nv);
+            collecting = 0;
+        }
+        if (ours == nk) return;  // tap.log is for UI traffic only
     }
-    if (ours == nk0 && nk0) return;  // keep tap.log for UI traffic only
     if (t_busy || !g_tap) return;
     t_busy = 1;
-    u64 x[8] = {a, b, c, d, e, f, g, h};
-    const void *kp, *gp, *bp;
-    int kn, gn, bn;
-    span_arg(x, 1, &kp, &kn);
     span_arg(x, 3, &gp, &gn);
     span_arg(x, 5, &bp, &bn);
-    static u64 keys[1024];
-    static uint32_t gens[1024];
-    static Il2CppObject *vals[4096];
-    uint8_t raw[48];
-    int nk = span_copy(kp, kn, 8, keys, sizeof keys);
+    static uint32_t gens[2048];
     int ng = span_copy(gp, gn, 4, gens, sizeof gens);
-    int nr = span_copy(bp, bn, 1, raw, sizeof raw);
-    int nv = decoded_values((Il2CppObject *)a, vals, 4096);
-    char rh[100];
-    hex(raw, nr, rh, sizeof rh);
-    tap_printf("R keys=%d bytes=%d values=%d raw=%s\n", kn, bn, nv, rh);
+    int nv = decoded_values((Il2CppObject *)a, vals, 2048);
+    tap_printf("R keys=%d bytes=%d values=%d\n", kn, bn, nv);
     char val[512], cc[16];
     for (int i = 0; i < nk; i++) {
-        fourcc(key_get(keys[i]), cc);
-        tap_printf("  %016llx %s gen=%u\n", keys[i], cc, i < ng ? gens[i] : 0);
-    }
-    for (int i = 0; i < nv && i < 400; i++) {
-        value_string(vals[i], val, sizeof val);
-        tap_printf("    [%d] %s\n", i, val);
+        fourcc_string(key_get(keys[i]), cc);
+        if (i < nv) typed_value_string(vals[i], val, sizeof val);
+        else strlcpy(val, "?", sizeof val);
+        tap_printf("  %016llx %s gen=%u = %s\n", keys[i], cc, i < ng ? gens[i] : 0, val);
     }
     fflush(g_tap);
     t_busy = 0;
@@ -262,31 +504,31 @@ static void hook_event(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
 
 // OpenChannels(Span<byte> target, Span<ChannelData> channels)
 static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
-    if (!t_busy && g_tap) {
+    if (!t_busy) {
         t_busy = 1;
+        if (!g_plugin) g_plugin = a;
         u64 x[8] = {a, b, c, d, e, f, g, h};
         const void *tp, *cp;
         int tn, cn;
         span_arg(x, 1, &tp, &tn);
         span_arg(x, 3, &cp, &cn);
         uint8_t target[96];
-        static uint8_t ch[16 * 1024];  // ChannelData { u32 property; u32 generation; u64 key; }
-        char th[200], cc[16];
-        hex(target, span_copy(tp, tn, 1, target, sizeof target), th, sizeof th);
+        static uint8_t ch[16 * 4096];
+        int tl = span_copy(tp, tn, 1, target, sizeof target);
         int n = span_copy(cp, cn, 16, ch, sizeof ch);
-        tap_printf("O target(%d)=%s channels=%d\n", tn, th, cn);
-        if (!g_plugin) g_plugin = a;
         // target: u8 pair count, then (u32 code, u32 value) pairs
-        int tcount = tn > 0 ? target[0] : 0;
-        for (int p = 0; p < tcount && 1 + 8 * p + 8 <= (int)sizeof target && 1 + 8 * p + 8 <= tn; p++) {
+        int pairs = tl > 0 ? target[0] : 0;
+        for (int p = 0; p < pairs && 9 + 8 * p <= tl; p++) {
             uint32_t code, val;
             memcpy(&code, target + 1 + 8 * p, 4);
-            memcpy(&val, target + 1 + 8 * p + 4, 4);
+            memcpy(&val, target + 5 + 8 * p, 4);
             if (code == CODE_GUID && val) g_guid = val;
-            if (code == CODE_011 && tcount == 3) g_record_type = val;
-            if (code == CODE_FERD && (val >> 24) == 0x01 && !g_seen_person) g_seen_person = val;
-            if (code == CODE_FERD && (val >> 24) == 0x18 && !g_seen_club) g_seen_club = val;
+            if (code == CODE_011 && pairs == 3) g_record_type = val;
+            if (code == CODE_FERD) note_seen(val);
         }
+        char th[200], cc[16];
+        hex(target, tl, th, sizeof th);
+        tap_printf("O target(%d)=%s channels=%d\n", tn, th, cn);
         for (int i = 0; i < n; i++) {
             uint32_t prop, gen;
             u64 key;
@@ -295,193 +537,24 @@ static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
             memcpy(&key, ch + 16 * i + 8, 8);
             key_put(key, prop);
             if (gen > g_max_gen && gen < 0x40000000u) g_max_gen = gen;
-            fourcc(prop, cc);
+            fourcc_string(prop, cc);
             tap_printf("  %016llx %s gen=%u\n", key, cc, gen);
         }
-        fflush(g_tap);
+        if (g_tap) fflush(g_tap);
         t_busy = 0;
     }
     g_orig_open(a, b, c, d, e, f, g, h);
 }
 
-// --- probe: query every property of one person and one club -------------------
-// Runs on the main thread from the Tick hook once a career is loaded. Results
-// go to probe.tsv: record <tab> property code <tab> value.
-static uint32_t g_props[2][8192];
-static int g_nprops[2];
-static uint32_t g_probe_ids[2];
-static int g_probe_state, g_probe_target, g_probe_next, g_probe_wait, g_probe_attempts;
-static FILE *g_probe;
-
-static void probe_record(const u64 *keys, int nk, Il2CppObject **vals, int nv) {
-    if (!g_probe) return;
-    char val[1024], cc[16];
-    for (int i = 0; i < nk; i++) {
-        if (!is_ours(keys[i])) continue;
-        int t = (int)((keys[i] >> 32) & 0xffff), p = (int)(keys[i] & 0xffffffff);
-        if (t > 1 || p >= g_nprops[t]) continue;
-        if (i < nv) value_string(vals[i], val, sizeof val);
-        else strlcpy(val, "?", sizeof val);
-        fourcc(g_props[t][p], cc);
-        fprintf(g_probe, "%s\t%08x\t%s\t%08x\t%s\n", t ? "club" : "person", g_probe_ids[t], cc, g_props[t][p], val);
-        g_probe_hits++;
-    }
-    fflush(g_probe);
-}
-
-static int make_target(uint8_t *out, uint32_t record_id) {
-    uint32_t pairs[6] = {CODE_011, g_record_type, CODE_GUID, g_guid, CODE_FERD, record_id};
-    out[0] = 3;
-    memcpy(out + 1, pairs, sizeof pairs);
-    return 1 + (int)sizeof pairs;
-}
-
-#define OUR_ROOT_KEY (OUR_KEY_PREFIX | 0x0000FFFF00000000ull)
-
-static void put_action(uint8_t *buf, int i, u64 key, u64 extra, int32_t mode) {
-    uint8_t *a = buf + (size_t)g_action_size * (size_t)i;  // ChannelAction { u64 key; u64 additionalKey; i32 mode; }
-    memset(a, 0, (size_t)g_action_size);
-    memcpy(a, &key, 8);
-    memcpy(a + 8, &extra, 8);
-    memcpy(a + 16, &mode, 4);
-}
-
-static void run_actions(uint8_t *buf, int n) {
-    if (n) g_orig_actions(g_plugin, (u64)buf, (u64)n, (u64)g_actions_method, 0, 0, 0, 0);
-}
-
-static void probe_open_batch(void) {
-    int t = g_probe_target;
-    uint8_t target[32];
-    int tlen = make_target(target, g_probe_ids[t]);
-    static uint8_t ch[16 * 128];
-    int n = 0;
-    for (; n < 128 && g_probe_next < g_nprops[t]; n++, g_probe_next++) {
-        uint32_t prop = g_props[t][g_probe_next], gen = ++g_max_gen;
-        u64 key = OUR_KEY_PREFIX | ((u64)t << 32) | (u64)g_probe_next;
-        memcpy(ch + 16 * n, &prop, 4);
-        memcpy(ch + 16 * n + 4, &gen, 4);
-        memcpy(ch + 16 * n + 8, &key, 8);
-    }
-    if (!n) return;
-    // Register each key as a node of the engine's binding tree (as the UI does)
-    // before opening it: AddNode(key, parent) + SetPropertyID(key, property).
-    static uint8_t acts[24 * 2 * 130];
-    int na = 0;
-    static int root_added;
-    u64 parent = g_probe_attempts == 1 ? 0 : OUR_ROOT_KEY;
-    if (parent && !root_added) { put_action(acts, na++, OUR_ROOT_KEY, 0, g_add_node_mode); root_added = 1; }
-    for (int i = 0; i < n; i++) {
-        uint32_t prop;
-        u64 key;
-        memcpy(&prop, ch + 16 * i, 4);
-        memcpy(&key, ch + 16 * i + 8, 8);
-        put_action(acts, na++, key, parent, g_add_node_mode);
-        put_action(acts, na++, key, (u64)prop, g_set_property_mode);
-    }
-    run_actions(acts, na);
-    g_orig_open(g_plugin, (u64)target, (u64)tlen, (u64)ch, (u64)n, (u64)g_open_method, 0, 0);
-}
-
-static void probe_close_all(void) {
-    if (g_close_mode < 0 || !g_orig_actions || g_action_size < 20) return;
-    static uint8_t actions[24 * 2 * 8192];
-    for (int t = 0; t < 2; t++) {
-        int n = 0;
-        for (int p = 0; p < g_nprops[t]; p++) {
-            u64 key = OUR_KEY_PREFIX | ((u64)t << 32) | (u64)p;
-            put_action(actions, n++, key, 0, g_close_mode);
-            if (g_remove_node_mode >= 0) put_action(actions, n++, key, 0, g_remove_node_mode);
-        }
-        run_actions(actions, n);
-    }
-}
-
-static void probe_step(void) {
-    switch (g_probe_state) {
-    case 0:  // wait for a loaded career with a person and a club on screen
-        if (!g_plugin || !g_guid || !g_record_type || !g_seen_person || !g_seen_club) return;
-        if (++g_probe_wait < 300) return;  // let the career screen settle
-        g_probe_ids[0] = g_seen_person;
-        g_probe_ids[1] = g_seen_club;
-        g_nprops[0] = catalog_properties("FM.UI", "PersonReference", g_props[0], 8192);
-        g_nprops[1] = catalog_properties("FM.UI", "ClubReference", g_props[1], 8192);
-        g_probe = data_file("probe.tsv", "w");
-        log_line("probe: person %08x (%d props), club %08x (%d props), guid %08x, type %08x", g_probe_ids[0],
-                 g_nprops[0], g_probe_ids[1], g_nprops[1], g_guid, g_record_type);
-        g_probe_state = 1;
-        return;
-    case 1:  // open our channels, one batch per frame
-        probe_open_batch();
-        if (g_probe_next >= g_nprops[g_probe_target]) {
-            g_probe_next = 0;
-            if (++g_probe_target > 1) { g_probe_state = 2; g_probe_wait = 0; }
-        }
-        return;
-    case 2:  // collect responses
-        if (++g_probe_wait < 600) return;
-        probe_close_all();
-        log_line("probe: attempt done, %d values received, channels closed", g_probe_hits);
-        g_probe_state = 3;
-        g_probe_wait = 0;
-        return;
-    case 3:  // retry (with fresh generations) while nothing has come back
-        if (g_probe_hits || g_probe_attempts >= 3) return;
-        if (++g_probe_wait < 900) return;
-        g_probe_attempts++;
-        g_probe_target = g_probe_next = 0;
-        g_probe_state = 1;
-        log_line("probe: retry %d (generations from %u)", g_probe_attempts, g_max_gen + 1);
-        return;
-    default:
-        return;
-    }
-}
-
-// PerformChannelActions(Span<ChannelAction> actions): logged to learn the UI's protocol.
-static void hook_actions(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
-    if (!t_busy && g_tap && g_action_size >= 20) {
-        t_busy = 1;
-        u64 x[8] = {a, b, c, d, e, f, g, h};
-        const void *ap;
-        int an;
-        span_arg(x, 1, &ap, &an);
-        static uint8_t acts[24 * 2048];
-        int n = span_copy(ap, an, (size_t)g_action_size, acts, sizeof acts);
-        tap_printf("A actions=%d\n", an);
-        for (int i = 0; i < n && i < 400; i++) {
-            u64 key, extra;
-            int32_t mode;
-            memcpy(&key, acts + (size_t)g_action_size * i, 8);
-            memcpy(&extra, acts + (size_t)g_action_size * i + 8, 8);
-            memcpy(&mode, acts + (size_t)g_action_size * i + 16, 4);
-            char cc[16];
-            fourcc(key_get(key), cc);
-            tap_printf("  %016llx %s mode=%d extra=%016llx\n", key, cc, mode, extra);
-        }
-        fflush(g_tap);
-        t_busy = 0;
-    }
-    g_orig_actions(a, b, c, d, e, f, g, h);
-}
-
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     g_orig_tick(a, b, c, d, e, f, g, h);
-    if (t_busy) return;
-    t_busy = 1;
     if (!g_plugin) g_plugin = a;
-    probe_step();
-    t_busy = 0;
+    query_step();
 }
 
-// --- vtable patching -----------------------------------------------------------
-static int safe_read(const void *addr, void *out, size_t n) {
-    mach_vm_size_t got = 0;
-    return mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)addr, n, (mach_vm_address_t)out, &got) ==
-               KERN_SUCCESS && got == n;
-}
-
-// Replaces every vtable entry {methodPtr, method == m} in klass. Returns count.
+// --- installation --------------------------------------------------------------
+// Replaces every vtable entry {methodPtr, method == m} in klass (or, with no
+// hook, only looks up the original pointer). Returns the number of slots.
 static int patch_vtable(Il2CppClass *klass, const MethodInfo *m, void *hook, Fn8 *orig) {
     void *const *mi = (void *const *)m;
     int patched = 0;
@@ -491,31 +564,13 @@ static int patch_vtable(Il2CppClass *klass, const MethodInfo *m, void *hook, Fn8
         if (pair[1] != m || (pair[0] != mi[0] && pair[0] != mi[1])) continue;
         void **slot = (void **)((uint8_t *)klass + off);
         if (!*orig) *orig = (Fn8)pair[0];
-        if (!hook) return 1;  // lookup only
+        if (!hook) return 1;
         mach_vm_protect(mach_task_self(), (mach_vm_address_t)slot, 8, false, VM_PROT_READ | VM_PROT_WRITE);
         *slot = hook;
         patched++;
-        log_line("tap: patched %s.%s at class+0x%zx", il2cpp_class_get_name(klass), il2cpp_method_get_name(m), off);
     }
+    log_line("tap: %s.%s: %d slot(s)", il2cpp_class_get_name(klass), il2cpp_method_get_name(m), patched);
     return patched;
-}
-
-static void learn_span_layout(const MethodInfo *m) {
-    Il2CppClass *k = il2cpp_class_from_type(il2cpp_method_get_param(m, 0));
-    g_span.size = il2cpp_class_value_size(k, NULL);
-    void *it = NULL;
-    FieldInfo *f;
-    while ((f = il2cpp_class_get_fields(k, &it))) {
-        if (il2cpp_field_get_flags(f) & FIELD_ATTRIBUTE_STATIC) continue;
-        const char *n = il2cpp_field_get_name(f);
-        int off = (int)il2cpp_field_get_offset(f) - 0x10;  // value-type offsets include the object header
-        if (!strcmp(n, "_reference") || !strcmp(n, "_pointer")) g_span.ptr_off = off;
-        else if (!strcmp(n, "_length")) g_span.len_off = off;
-        else if (!strcmp(n, "_pinnable")) g_span.pinnable_off = off;
-        else if (!strcmp(n, "_byteOffset")) g_span.byte_off = off;
-        log_line("tap: Span field %s @%d", n, off);
-    }
-    log_line("tap: Span size %d", g_span.size);
 }
 
 static const MethodInfo *method(Il2CppClass *k, const char *name, int argc) {
@@ -524,48 +579,81 @@ static const MethodInfo *method(Il2CppClass *k, const char *name, int argc) {
     return m;
 }
 
+// The non-generic overload of a method (e.g. TypedValue.Get() returning object).
+static const MethodInfo *method_returning(Il2CppClass *k, const char *name, const char *ret) {
+    void *it = NULL;
+    const MethodInfo *m;
+    char tn[256];
+    while (k && (m = il2cpp_class_get_methods(k, &it))) {
+        if (strcmp(il2cpp_method_get_name(m), name) || il2cpp_method_get_param_count(m)) continue;
+        il2cpp_type_name(il2cpp_method_get_return_type(m), tn, sizeof tn);
+        if (!strcmp(tn, ret)) return m;
+    }
+    log_line("tap: %s %s() not found", ret, name);
+    return NULL;
+}
+
+static size_t field_offset(Il2CppClass *k, const char *name) {
+    FieldInfo *f = k ? il2cpp_class_get_field_from_name(k, name) : NULL;
+    return f ? il2cpp_field_get_offset(f) : 0;
+}
+
+static int32_t enum_value(Il2CppClass *k, const char *name) {
+    int32_t v = -1;
+    FieldInfo *f = k ? il2cpp_class_get_field_from_name(k, name) : NULL;
+    if (f) il2cpp_field_static_get_value(f, &v);
+    return v;
+}
+
+static int learn_span_layout(const MethodInfo *m) {
+    Il2CppClass *k = il2cpp_class_from_type(il2cpp_method_get_param(m, 0));
+    int size = il2cpp_class_value_size(k, NULL);
+    void *it = NULL;
+    FieldInfo *f;
+    while ((f = il2cpp_class_get_fields(k, &it))) {
+        if (il2cpp_field_get_flags(f) & FIELD_ATTRIBUTE_STATIC) continue;
+        const char *n = il2cpp_field_get_name(f);
+        int off = (int)il2cpp_field_get_offset(f) - 0x10;  // value-type offsets include the object header
+        if (!strcmp(n, "_reference") || !strcmp(n, "_pointer")) g_span.ptr_off = off;
+        else if (!strcmp(n, "_length")) g_span.len_off = off;
+    }
+    log_line("tap: Span size %d (pointer @%d, length @%d)", size, g_span.ptr_off, g_span.len_off);
+    return size == 16 && g_span.ptr_off >= 0 && g_span.len_off >= 0;
+}
+
 void tap_install(void) {
     Il2CppClass *receiver = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "GameReceiver");
     Il2CppClass *wrapper = il2cpp_find_class("FM.GamePlugin.dll", "", "FM_GamePlugin_IGamePlugin_NativeWrapper");
     Il2CppClass *typed_value = il2cpp_find_class("SI.Core.dll", "SI.Core", "TypedValue");
+    Il2CppClass *modes = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "ChannelActionMode");
+    Il2CppClass *action = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "ChannelAction");
+    g_record_ref_class = il2cpp_find_class("FM.UI.dll", "FM.UI", "DatabaseRecordReference");
+    g_string_class = il2cpp_find_class("mscorlib.dll", "System", "String");
 
     const MethodInfo *response = method(receiver, "SendDataResponse", 3);
     const MethodInfo *event = method(receiver, "SendEvent", 2);
     const MethodInfo *open = method(wrapper, "OpenChannels", 2);
     const MethodInfo *tick = method(wrapper, "Tick", 0);
     const MethodInfo *actions = method(wrapper, "PerformChannelActions", 1);
+    g_typed_value_as_string = method(typed_value, "AsString", 0);
+    g_typed_value_get = method_returning(typed_value, "Get", "System.Object");
     g_open_method = open;
     g_actions_method = actions;
-    Il2CppClass *mode_class = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "ChannelActionMode");
-    FieldInfo *close_field = mode_class ? il2cpp_class_get_field_from_name(mode_class, "CloseChannel") : NULL;
-    if (close_field) il2cpp_field_static_get_value(close_field, &g_close_mode);
-    const char *mode_names[3] = {"AddNode", "RemoveNode", "SetPropertyID"};
-    int32_t *mode_vals[3] = {&g_add_node_mode, &g_remove_node_mode, &g_set_property_mode};
-    for (int i = 0; i < 3 && mode_class; i++) {
-        FieldInfo *mf = il2cpp_class_get_field_from_name(mode_class, mode_names[i]);
-        if (mf) il2cpp_field_static_get_value(mf, mode_vals[i]);
-    }
-    Il2CppClass *action_class = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "ChannelAction");
-    if (action_class) g_action_size = il2cpp_class_value_size(action_class, NULL);
-    log_line("tap: modes AddNode=%d RemoveNode=%d CloseChannel=%d SetPropertyID=%d, ChannelAction size=%d",
-             g_add_node_mode, g_remove_node_mode, g_close_mode, g_set_property_mode, g_action_size);
-    g_typed_value_as_string = method(typed_value, "AsString", 0);
-    if (!response || !event || !open || !tick || !actions || !g_typed_value_as_string) {
-        log_line("tap: not installed (missing classes or methods)");
-        return;
-    }
+    g_receiver_list_offset = field_offset(receiver, "m_resusableTypedList");
+    g_receiver_callback_offset = field_offset(receiver, "m_onChannelDataChange");
+    g_record_index_off = field_offset(g_record_ref_class, "m_index");
+    g_record_type_off = field_offset(g_record_ref_class, "<Type>k__BackingField");
+    g_mode_add_node = enum_value(modes, "AddNode");
+    g_mode_remove_node = enum_value(modes, "RemoveNode");
+    g_mode_close = enum_value(modes, "CloseChannel");
+    g_mode_set_property = enum_value(modes, "SetPropertyID");
+    g_action_size = action ? il2cpp_class_value_size(action, NULL) : 0;
 
-    void *it = NULL;
-    FieldInfo *f;
-    while ((f = il2cpp_class_get_fields(receiver, &it)))
-    {
-        if (!strcmp(il2cpp_field_get_name(f), "m_resusableTypedList")) g_receiver_list_offset = il2cpp_field_get_offset(f);
-        if (!strcmp(il2cpp_field_get_name(f), "m_onChannelDataChange")) g_receiver_callback_offset = il2cpp_field_get_offset(f);
-    }
-    learn_span_layout(response);
-    if (g_span.len_off < 0 || (g_span.ptr_off < 0 && (g_span.pinnable_off < 0 || g_span.byte_off < 0)) ||
-        (g_span.size <= 16 && g_span.ptr_off < 0) || !g_receiver_list_offset) {
-        log_line("tap: not installed (unexpected Span/receiver layout)");
+    if (!response || !event || !open || !tick || !actions || !g_typed_value_as_string || !g_typed_value_get ||
+        !g_receiver_list_offset || !g_receiver_callback_offset || !g_record_index_off || !g_record_type_off ||
+        g_mode_add_node < 0 || g_mode_remove_node < 0 || g_mode_close < 0 || g_mode_set_property < 0 ||
+        g_action_size != 24 || !g_string_class || !learn_span_layout(response)) {
+        log_line("tap: not installed (unexpected game layout; see lines above)");
         return;
     }
 
@@ -573,14 +661,17 @@ void tap_install(void) {
     int n = patch_vtable(receiver, response, (void *)hook_response, &g_orig_response);
     n += patch_vtable(receiver, event, (void *)hook_event, &g_orig_event);
     n += patch_vtable(wrapper, open, (void *)hook_open, &g_orig_open);
-    n += patch_vtable(wrapper, actions, (void *)hook_actions, &g_orig_actions);  // also used to close our channels
-    if (g_orig_actions && g_close_mode >= 0 && g_receiver_callback_offset)
-        n += patch_vtable(wrapper, tick, (void *)hook_tick, &g_orig_tick);
-    else
-        log_line("tap: probe disabled (close action or receiver callback not found)");
+    patch_vtable(wrapper, actions, NULL, &g_orig_actions);  // lookup only
+    n += patch_vtable(wrapper, tick, (void *)hook_tick, &g_orig_tick);
     log_line("tap: installed (%d vtable slots)", n);
 }
 
 #else
 void tap_install(void) { log_line("tap: only supported on Apple Silicon"); }
+int tap_ready(void) { return 0; }
+char *tap_query(uint32_t record, const uint32_t *props, int n) { (void)record; (void)props; (void)n; return NULL; }
+int tap_seen(uint32_t *out, int cap) { (void)out; (void)cap; return 0; }
+uint32_t tap_guid(void) { return 0; }
+void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }
+uint32_t fourcc_parse(const char *s) { return (uint32_t)strtoul(s + 1, NULL, 16); }
 #endif

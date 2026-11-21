@@ -4,14 +4,15 @@
 
 A macOS mod for Football Manager 27 that turns the game into a living manager career: relationships with memory, press conferences, an interactive social feed, in-world betting odds and your own contract — driven by a world engine, with an AI model API for dialogue.
 
-> 开发中。阶段 0（注入桥）已完成，下一步阶段 1（读取游戏数据）。完整方案见 [docs/PLAN.md](docs/PLAN.md)。
+> 开发中。阶段 0（注入桥）和阶段 1（读取游戏数据）已完成，下一步阶段 2。完整方案见 [docs/PLAN.md](docs/PLAN.md)。
 
 ## 组成
 
 | 目录 | 内容 |
 | --- | --- |
 | `bridge/` | 注入 FM27 进程的小型动态库，通过 il2cpp 接口读写游戏数据 |
-| `docs/` | 方案和设计文档 |
+| `tools/` | `fm27.py`：查询接口的客户端（阵容、人物摘要、原始查询） |
+| `docs/` | 方案、协议笔记 |
 
 ## 构建
 
@@ -37,6 +38,20 @@ make -C bridge
 - `bridge.log`：运行日志
 - `classes.tsv`：所有类（程序集、命名空间、类名、父类）
 - `members.txt`：`FM.*` / `SI.*` 类的字段（含偏移）和方法
+- `catalog.tsv`：所有引用类型的属性代码和值类型
+- `api.json`：查询接口地址和令牌（仅本用户可读）
+
+## 查询数据
+
+读入生涯后：
+
+```bash
+python3 tools/fm27.py seen
+python3 tools/fm27.py person 01049638
+python3 tools/fm27.py squad 18000230
+```
+
+接口只监听 `127.0.0.1:27270`，每次启动生成新令牌。
 
 ## 环境
 

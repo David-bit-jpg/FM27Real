@@ -16,6 +16,7 @@
 
 #include "il2cpp_api.h"
 #include "catalog.h"
+#include "http.h"
 #include "inventory.h"
 #include "log.h"
 #include "tap.h"
@@ -79,6 +80,7 @@ static void *worker(void *arg) {
     if (dump_wanted("members.txt")) inventory_dump();
     if (dump_wanted("catalog.tsv")) catalog_dump();
     tap_install();
+    http_start();
     il2cpp_thread_detach(thread);
     return NULL;
 }
