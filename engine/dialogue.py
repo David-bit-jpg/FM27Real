@@ -188,8 +188,9 @@ def converse(model: Provider, career: Career, snap: dict, text: str, language: s
     memories = store.memories(person_id)
     system = build_system(snap, career, canon, memories, language)
     prompt = build_prompt(history, career.manager_name, snap.get("name", ""), text)
-    store.add_message(person_id, "manager", text, career.date)
+    # Ask first: if the model fails, nothing is stored and the manager can resend.
     result = validate(model.complete(system, prompt, REPLY_SCHEMA))
     meta = {k: result[k] for k in ("mood", "relation_delta", "memory", "new_canon", "end")}
+    store.add_message(person_id, "manager", text, career.date)
     message_id = store.add_message(person_id, "person", result["reply"], career.date, meta)
     return {"id": message_id, **result}
