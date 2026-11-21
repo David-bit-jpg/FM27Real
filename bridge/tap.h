@@ -13,6 +13,10 @@ int tap_ready(void);
 // or NULL when not ready. Call from a background thread.
 char *tap_query(uint32_t record, const uint32_t *props, int n);
 
+// Same, for any serialized target (u8 pair count + (u32 code, i32 value) pairs),
+// e.g. the "target" hex the encoder emits for interop references.
+char *tap_query_target(const uint8_t *target, int target_len, const uint32_t *props, int n);
+
 // Records the interface opened recently (oldest first). Returns the count.
 int tap_seen(uint32_t *out, int cap);
 

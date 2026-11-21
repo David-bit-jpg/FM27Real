@@ -10,6 +10,7 @@ portraits from FM's graphics folder.
     python3 tools/fm27.py seen
     python3 tools/fm27.py person 01049638
     python3 tools/fm27.py squad 18000230
+    python3 tools/fm27.py dressing-room 18000230
     python3 tools/fm27.py raw 01049638 PersonReference > setford.json
 
 Record ids are 8 hex digits: kind byte + index (01 person, 03 club, 0a nation,
@@ -19,6 +20,7 @@ words reversed ("eman" = name). See docs/PROTOCOL.md.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -62,14 +64,38 @@ TEAM_FIELDS = {
     "staff": " Vj5",   # manager first, then coaches and other staff
 }
 
+# Social model (confirmed against Leicester's dynamics screen, 2028-03-07).
+# Values are FM "dynamic references": {"dyn": type, "props": {code: value}}.
+PERSON_SOCIAL = {
+    "influence": "tHV ",        # 球队领袖 / 极具影响力球员 / 有影响力球员 / 其他
+    "favoured": "NCdZ",         # favoured people: nNhU = [{srep: person, nrtS: relation}]
+    "manager_relation": "nhlr", # ohlr = view of the manager, phlr = relationship kind
+    "happiness": ["4g1d", "5g1d", "6g1d", "7g1d", "8g1d"],  # per category; csed = sentence
+}
+TEAM_SOCIAL = {
+    "groups": "0vQT",            # Li3E / Mi3E / Ni3E = member lists of social groups 1-3
+    "manager_support": "Nk1A",   # each: XsfK = rating word, Qk1A/Vk1A = values,
+    "cohesion": "Ok1A",          #   2bMM = summary, Sk1A = [{CGSQ: reason}]
+    "atmosphere": "Pk1A",
+}
+_MARKUP = re.compile(r"(male|female)#\d|\|/?b\||</?b>|<[^>]+>")
+
 
 def _text(value):
     """FM link markup arrives as {"text", "links"}; keep the visible text."""
     if isinstance(value, dict) and "text" in value:
-        return value["text"].replace("​", "")
+        value = value["text"]
     if isinstance(value, str):
-        return value.replace("​", "")
+        return _MARKUP.sub("", value.replace("\u200b", "")).strip()
     return value
+
+
+def _props(value) -> dict:
+    return value.get("props", {}) if isinstance(value, dict) else {}
+
+
+def _refs(value) -> list[str]:
+    return [x["ref"] for x in value if isinstance(x, dict) and "ref" in x] if isinstance(value, list) else []
 
 
 class Bridge:
@@ -136,6 +162,50 @@ class Bridge:
             "staff": refs(raw.get(TEAM_FIELDS["staff"])),
         }
 
+    def name(self, record: str) -> str:
+        return _text(self.query(record, ["eman"]).get("eman")) or record
+
+    def person_social(self, record: str) -> dict:
+        """Influence, favoured people, view of the manager and happiness concerns."""
+        codes = [PERSON_SOCIAL["influence"], PERSON_SOCIAL["favoured"], PERSON_SOCIAL["manager_relation"]]
+        raw = self.query(record, codes + PERSON_SOCIAL["happiness"])
+        favoured = []
+        for f in _props(raw.get(PERSON_SOCIAL["favoured"])).get("nNhU") or []:
+            p = _props(f)
+            ref = (p.get("srep") or {}).get("ref")
+            if ref:
+                favoured.append({"id": ref, "name": self.name(ref), "relation": _text(p.get("nrtS"))})
+        rel = _props(raw.get(PERSON_SOCIAL["manager_relation"]))
+        happiness = [_text(_props(raw.get(c)).get("csed")) for c in PERSON_SOCIAL["happiness"]]
+        return {
+            "influence": _text(raw.get(PERSON_SOCIAL["influence"])),
+            "favoured": favoured,
+            "view_of_manager": _text(rel.get("ohlr")),
+            "happiness": [h for h in happiness if h and h != "-"],
+        }
+
+    def dressing_room(self, team_record: str) -> dict:
+        """Team dynamics, social groups and every first-team player's social state."""
+        raw = self.query(team_record, list(TEAM_SOCIAL.values()))
+        groups = _props(raw.get(TEAM_SOCIAL["groups"]))
+        group_lists = [_refs(groups.get(code)) for code in ("Li3E", "Mi3E", "Ni3E")]
+        dynamics = {}
+        for key in ("manager_support", "cohesion", "atmosphere"):
+            p = _props(raw.get(TEAM_SOCIAL[key]))
+            dynamics[key] = {
+                "rating": _text(p.get("XsfK")),
+                "value": p.get("Vk1A"),
+                "summary": _text(p.get("2bMM")),
+                "reasons": [_text(_props(r).get("CGSQ")) for r in p.get("Sk1A") or []],
+            }
+        team = self.team(team_record)
+        players = []
+        for ref in team["squad"]:
+            group = next((i + 1 for i, members in enumerate(group_lists) if ref in members), None)
+            players.append({"id": ref, "name": self.name(ref), "social_group": group, **self.person_social(ref)})
+        return {"team": team["name"], "dynamics": dynamics,
+                "social_groups": [[self.name(r) for r in g] for g in group_lists if g], "players": players}
+
     def squad(self, team_record: str) -> dict:
         t = self.team(team_record)
         t["squad"] = [self.person(r) for r in t["squad"]]
@@ -158,6 +228,8 @@ def main(argv: list[str]) -> int:
         out = b.team(args[0])
     elif cmd == "squad" and args:
         out = b.squad(args[0])
+    elif cmd == "dressing-room" and args:
+        out = b.dressing_room(args[0])
     elif cmd == "raw" and len(args) == 2:
         out = b.query_all(args[0], args[1])
     else:

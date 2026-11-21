@@ -8,6 +8,7 @@
 //   GET /focus                          {"person": "01049638" | null} — the profile being viewed
 //   GET /query?id=010baef4&props=eman,dinu
 //   GET /query?id=010baef4&type=PersonReference     every property of that type
+//   GET /query?target=<hex>&props=...               any serialized target (from a "target" value)
 //
 // Property codes are 4 characters ("eman"; URL-encode spaces as %20) or
 // "#" + 8 hex digits.
@@ -157,8 +158,10 @@ static void handle(int fd) {
         return;
     }
     if (!strcmp(target, "/query")) {
-        char id[32] = "", props[8192] = "", type[128] = "";
-        if (!query || !param(query, "id", id, sizeof id)) { respond(fd, 400, "{\"error\":\"id required\"}"); return; }
+        char id[32] = "", props[8192] = "", type[128] = "", target_hex[600] = "";
+        int has_id = query && param(query, "id", id, sizeof id);
+        int has_target = query && param(query, "target", target_hex, sizeof target_hex);
+        if (!has_id && !has_target) { respond(fd, 400, "{\"error\":\"id or target required\"}"); return; }
         static uint32_t list[2048];
         int n = 0;
         if (param(query, "type", type, sizeof type)) {
@@ -174,7 +177,19 @@ static void handle(int fd) {
         }
         if (!n) { respond(fd, 400, "{\"error\":\"props or type required\"}"); return; }
         if (!tap_ready()) { respond(fd, 503, "{\"error\":\"no career loaded yet\"}"); return; }
-        char *body = tap_query((uint32_t)strtoul(id, NULL, 16), list, n);
+        char *body;
+        if (has_target) {
+            uint8_t t[300];
+            int tl = 0;
+            for (const char *p = target_hex; p[0] && p[1] && tl < (int)sizeof t; p += 2) {
+                int hi = hexval(p[0]), lo = hexval(p[1]);
+                if (hi < 0 || lo < 0) break;
+                t[tl++] = (uint8_t)(hi * 16 + lo);
+            }
+            body = tap_query_target(t, tl, list, n);
+        } else {
+            body = tap_query((uint32_t)strtoul(id, NULL, 16), list, n);
+        }
         respond(fd, body ? 200 : 503, body ? body : "{\"error\":\"query failed\"}");
         free(body);
         return;

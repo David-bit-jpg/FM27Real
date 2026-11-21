@@ -25,6 +25,8 @@ typedef void Il2CppDomain, Il2CppAssembly, Il2CppImage, Il2CppClass, Il2CppThrea
     X(const MethodInfo *, class_get_methods, (const Il2CppClass *, void **))                   \
     X(const MethodInfo *, class_get_method_from_name, (const Il2CppClass *, const char *, int)) \
     X(Il2CppClass *, class_from_type, (const Il2CppType *))                                    \
+    X(Il2CppClass *, class_get_element_class, (Il2CppClass *))                                 \
+    X(int, class_array_element_size, (const Il2CppClass *))                                    \
     X(int32_t, class_value_size, (const Il2CppClass *, uint32_t *))                            \
     X(const char *, field_get_name, (const FieldInfo *))                                       \
     X(const Il2CppType *, field_get_type, (const FieldInfo *))                                 \

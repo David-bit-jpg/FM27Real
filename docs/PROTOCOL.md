@@ -74,6 +74,16 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
 
 `tools/fm27.py` 里的 `PERSON_FIELDS` 有完整的已对照字段。
 
+## 动态引用（DynamicReference）
+
+很多值（社交圈、偏爱的人、幸福度、球队动态……）是 `SI.Bindable.DynamicReference`：它本身就是 `Dictionary<uint, TypedValue>`（属性代码 → 值），值随回复一起到达，不需要再查询。桥输出 `{"dyn": "<类型 ID>", "props": {...}}`，逐层展开。
+
+字典条目 24 字节：`hashCode@0, next@4, key@8, value@16`（注意：数组接口对这个共享泛型报告的元素大小是 8，不能用）。
+
+其他 `InteropReference` 子对象输出 `{"target": "<hex>"}`，可以用 `/query?target=<hex>&props=...` 继续查询。
+
+社交相关代码见 [SOCIAL.md](SOCIAL.md)。
+
 ## 日期
 
 `GameDate` 打包为 `年 << 17 | 一年中的第几天（从 1 开始）<< 8 | 时刻`。例：`262948864` = 2006-03-13。桥输出 `YYYY-MM-DD`。

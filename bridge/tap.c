@@ -33,6 +33,10 @@ static __thread int t_busy;                 // re-entrancy guard for logging
 static const MethodInfo *g_typed_value_as_string, *g_typed_value_get;
 static Il2CppClass *g_record_ref_class;  // FM.UI.DatabaseRecordReference
 static Il2CppClass *g_string_class;
+static Il2CppClass *g_dynref_class;   // SI.Bindable.DynamicReference: a Dictionary<uint, TypedValue>
+static Il2CppClass *g_interop_class;  // SI.Interop.InteropReference: identity = list of (u32, i32) pairs
+static const MethodInfo *g_dynref_get_id;
+static size_t g_interop_pairs_off;
 static size_t g_record_index_off, g_record_type_off;
 static size_t g_receiver_list_offset;      // GameReceiver.m_resusableTypedList
 static size_t g_receiver_callback_offset;  // GameReceiver.m_onChannelDataChange
@@ -232,6 +236,126 @@ static int derives_from(Il2CppClass *k, Il2CppClass *base) {
     return 0;
 }
 
+// --- Dictionary<uint, TypedValue> (SI.Core.Record) ------------------------------
+static struct {
+    int known;  // 0 unknown, 1 ok, -1 unsupported
+    size_t entries_off, count_off;
+    int entry_size, hash_off, next_off, key_off, value_off;
+} g_dict;
+
+static void learn_dict_layout(Il2CppClass *k) {
+    g_dict.known = -1;
+    g_dict.hash_off = g_dict.next_off = g_dict.key_off = g_dict.value_off = -1;
+    for (int depth = 0; k && depth < 8; depth++, k = il2cpp_class_get_parent(k)) {
+        void *it = NULL;
+        FieldInfo *f;
+        while ((f = il2cpp_class_get_fields(k, &it))) {
+            const char *n = il2cpp_field_get_name(f);
+            if (il2cpp_field_get_flags(f) & FIELD_ATTRIBUTE_STATIC) continue;
+            if (!strcmp(n, "_entries") || !strcmp(n, "entries")) {
+                g_dict.entries_off = il2cpp_field_get_offset(f);
+                Il2CppClass *arr = il2cpp_class_from_type(il2cpp_field_get_type(f));
+                Il2CppClass *el = arr ? il2cpp_class_get_element_class(arr) : NULL;
+                // Entry is a struct; its own value size is the array stride (the
+                // array API reports a pointer size for this shared generic).
+                g_dict.entry_size = el ? il2cpp_class_value_size(el, NULL) : 0;
+                void *it2 = NULL;
+                FieldInfo *ef;
+                while (el && (ef = il2cpp_class_get_fields(el, &it2))) {
+                    const char *en = il2cpp_field_get_name(ef);
+                    int off = (int)il2cpp_field_get_offset(ef) - 0x10;  // value-type offsets include the header
+                    if (!strcmp(en, "hashCode")) g_dict.hash_off = off;
+                    else if (!strcmp(en, "next")) g_dict.next_off = off;
+                    else if (!strcmp(en, "key")) g_dict.key_off = off;
+                    else if (!strcmp(en, "value")) g_dict.value_off = off;
+                }
+            }
+            if (!strcmp(n, "_count") || !strcmp(n, "count")) g_dict.count_off = il2cpp_field_get_offset(f);
+        }
+        if (g_dict.entries_off && g_dict.count_off) break;
+    }
+    if (g_dict.value_off >= 0 && g_dict.entry_size < g_dict.value_off + 8)
+        g_dict.entry_size = (g_dict.value_off + 8 + 7) & ~7;  // never smaller than the fields it holds
+    if (g_dict.entries_off && g_dict.count_off && g_dict.entry_size > 0 && g_dict.key_off >= 0 &&
+        g_dict.value_off >= 0 && (g_dict.hash_off >= 0 || g_dict.next_off >= 0))
+        g_dict.known = 1;
+    log_line("tap: Dictionary layout entries@0x%zx count@0x%zx entry=%d hash@%d next@%d key@%d value@%d -> %s",
+             g_dict.entries_off, g_dict.count_off, g_dict.entry_size, g_dict.hash_off, g_dict.next_off,
+             g_dict.key_off, g_dict.value_off, g_dict.known > 0 ? "ok" : "unsupported");
+}
+
+static void encode_value(JsonBuf *j, Il2CppObject *tv, int depth);
+static Il2CppClass *g_typed_value_class;
+
+// True when obj is readable and its class derives from TypedValue. Classes seen
+// before are cached so the parent walk only runs once per class.
+static int is_typed_value(Il2CppObject *obj) {
+    static Il2CppClass *good[64];
+    static int ngood;
+    Il2CppClass *k = NULL;
+    uint8_t probe[16];
+    if (!obj || !safe_read(obj, &k, sizeof k) || !k || !safe_read(k, probe, sizeof probe)) return 0;
+    for (int i = 0; i < ngood; i++) if (good[i] == k) return 1;
+    if (!derives_from(k, g_typed_value_class)) return 0;
+    if (ngood < 64) good[ngood++] = k;
+    return 1;
+}
+
+// {"dyn": "<reference type id>", "props": {"code": value, ...}}
+static void encode_dynref(JsonBuf *j, Il2CppObject *obj, int depth) {
+    if (!g_dict.known) learn_dict_layout(il2cpp_object_get_class(obj));
+    uint32_t type_id = 0;
+    Il2CppObject *boxed = g_dynref_get_id ? invoke0(il2cpp_object_get_virtual_method(obj, g_dynref_get_id), obj) : NULL;
+    if (boxed) safe_read((uint8_t *)boxed + 0x10, &type_id, 4);
+    char head[48];
+    snprintf(head, sizeof head, "{\"dyn\":\"%08x\",\"props\":{", type_id);
+    json_raw(j, head);
+    uint8_t *entries = NULL;
+    int32_t count = 0;
+    if (g_dict.known > 0 && safe_read((uint8_t *)obj + g_dict.entries_off, &entries, sizeof entries) &&
+        safe_read((uint8_t *)obj + g_dict.count_off, &count, sizeof count) && entries) {
+        int first = 1;
+        for (int i = 0; i < count && i < 4096; i++) {
+            uint8_t e[64];
+            if (g_dict.entry_size > (int)sizeof e ||
+                !safe_read(entries + 0x20 + (size_t)i * (size_t)g_dict.entry_size, e, (size_t)g_dict.entry_size))
+                break;
+            int32_t hash = 0, next = 0;
+            if (g_dict.hash_off >= 0) memcpy(&hash, e + g_dict.hash_off, 4);
+            if (g_dict.next_off >= 0) memcpy(&next, e + g_dict.next_off, 4);
+            if (g_dict.hash_off >= 0 ? hash < 0 : next < -1) continue;  // free slot
+            uint32_t key;
+            Il2CppObject *val;
+            memcpy(&key, e + g_dict.key_off, 4);
+            memcpy(&val, e + g_dict.value_off, sizeof val);
+            char code[16];
+            fourcc_string(key, code);
+            if (!first) json_raw(j, ",");
+            first = 0;
+            json_str(j, code);
+            json_raw(j, ":");
+            if (is_typed_value(val)) encode_value(j, val, depth + 1);
+            else json_raw(j, "null");
+        }
+    }
+    json_raw(j, "}}");
+}
+
+// Other interop references: {"target": "<hex>", "type": "..."}; the hex can be
+// passed back to /query?target= to read the object's properties.
+static int interop_target(Il2CppObject *obj, uint8_t *out, int cap) {
+    Il2CppObject *list = NULL;
+    if (!g_interop_pairs_off || !safe_read((uint8_t *)obj + g_interop_pairs_off, &list, sizeof list) || !list)
+        return 0;
+    uint8_t *arr = NULL;
+    int32_t n = 0;
+    if (!safe_read((uint8_t *)list + g_list_items_offset, &arr, sizeof arr) ||
+        !safe_read((uint8_t *)list + g_list_size_offset, &n, sizeof n) || !arr || n <= 0 || n > 32 || 1 + 8 * n > cap)
+        return 0;
+    out[0] = (uint8_t)n;  // u8 pair count, then (u32 code, i32 value) pairs
+    return safe_read(arr + 0x20, out + 1, 8 * (size_t)n) ? 1 + 8 * n : 0;
+}
+
 // --- value -> JSON -------------------------------------------------------------
 // Database records become {"ref":"010baef4"}; lists become arrays; strings have
 // FM's link markup reduced to their visible text; everything else is the
@@ -244,13 +368,14 @@ static void encode_value(JsonBuf *j, Il2CppObject *tv, int depth) {
     Il2CppClass *k = il2cpp_object_get_class(obj);
     const char *kname = il2cpp_class_get_name(k);
 
-    if (!strcmp(kname, "List`1") && depth < 4) {
-        static __thread Il2CppObject *items[4][1024];
+    if (!strcmp(kname, "List`1") && depth < 8) {
+        static __thread Il2CppObject *items[8][1024];
         int n = list_items(obj, items[depth], 1024);
         json_raw(j, "[");
         for (int i = 0; i < n; i++) {
             if (i) json_raw(j, ",");
-            encode_value(j, items[depth][i], depth + 1);
+            if (is_typed_value(items[depth][i])) encode_value(j, items[depth][i], depth + 1);
+            else json_raw(j, "null");
         }
         json_raw(j, "]");
         return;
@@ -267,6 +392,24 @@ static void encode_value(JsonBuf *j, Il2CppObject *tv, int depth) {
         json_str(j, kname);
         json_raw(j, "}");
         return;
+    }
+    if (g_dynref_class && derives_from(k, g_dynref_class) && depth < 6) {
+        encode_dynref(j, obj, depth);
+        return;
+    }
+    if (g_interop_class && derives_from(k, g_interop_class)) {
+        uint8_t t[1 + 8 * 32];
+        int tl = interop_target(obj, t, sizeof t);
+        if (tl) {
+            char th[2 * sizeof t + 1];
+            hex(t, tl, th, sizeof th);
+            json_raw(j, "{\"target\":");
+            json_str(j, th);
+            json_raw(j, ",\"type\":");
+            json_str(j, kname);
+            json_raw(j, "}");
+            return;
+        }
     }
     static __thread char buf[16384];
     if (k == g_string_class) {
@@ -317,7 +460,8 @@ static struct {
     pthread_cond_t done_cv;
     int state;              // 0 idle, 1 pending, 2 open, 3 done
     uint32_t id;            // query number, part of each key
-    uint32_t target_id;     // ferd
+    uint8_t target[1 + 8 * 32];  // serialized target: u8 count + (u32, i32) pairs
+    int target_len;
     uint32_t props[QUERY_MAX];
     char *values[QUERY_MAX];
     int n, opened, received;
@@ -341,10 +485,6 @@ static void run_actions(uint8_t *buf, int n) {
 static void query_open_batch(void) {
     static int root_added;
     static uint8_t ch[16 * 256], acts[24 * (2 * 256 + 1)];
-    uint8_t target[32];
-    uint32_t pairs[6] = {CODE_011, g_record_type, CODE_GUID, g_guid, CODE_FERD, g_q.target_id};
-    target[0] = 3;  // u8 pair count, then (code, value) pairs
-    memcpy(target + 1, pairs, sizeof pairs);
 
     int n = 0, na = 0;
     if (!root_added) { put_action(acts, na++, OUR_ROOT_KEY, 0, g_mode_add_node); root_added = 1; }
@@ -358,7 +498,7 @@ static void query_open_batch(void) {
         put_action(acts, na++, key, (u64)prop, g_mode_set_property);  // then its property, then open
     }
     run_actions(acts, na);
-    if (n) g_orig_open(g_plugin, (u64)target, 1 + sizeof pairs, (u64)ch, (u64)n, (u64)g_open_method, 0, 0);
+    if (n) g_orig_open(g_plugin, (u64)g_q.target, (u64)g_q.target_len, (u64)ch, (u64)n, (u64)g_open_method, 0, 0);
 }
 
 static void query_close(void) {
@@ -413,12 +553,21 @@ static void query_collect(const u64 *keys, int nk, Il2CppObject **vals, int nv) 
 int tap_ready(void) { return g_plugin && g_guid && g_record_type && g_orig_tick; }
 
 char *tap_query(uint32_t record, const uint32_t *props, int n) {
-    if (!tap_ready() || n <= 0) return NULL;
+    uint8_t target[25];
+    uint32_t pairs[6] = {CODE_011, g_record_type, CODE_GUID, g_guid, CODE_FERD, record};
+    target[0] = 3;  // u8 pair count, then (code, value) pairs
+    memcpy(target + 1, pairs, sizeof pairs);
+    return tap_query_target(target, sizeof target, props, n);
+}
+
+char *tap_query_target(const uint8_t *target, int target_len, const uint32_t *props, int n) {
+    if (!tap_ready() || n <= 0 || target_len < 1 || target_len > (int)sizeof g_q.target) return NULL;
     if (n > QUERY_MAX) n = QUERY_MAX;
     pthread_mutex_lock(&g_q.lock);
     pthread_mutex_lock(&g_q.m);
     g_q.id++;
-    g_q.target_id = record;
+    memcpy(g_q.target, target, (size_t)target_len);
+    g_q.target_len = target_len;
     memcpy(g_q.props, props, sizeof(uint32_t) * (size_t)n);
     memset(g_q.values, 0, sizeof(char *) * (size_t)n);
     g_q.n = n;
@@ -450,7 +599,7 @@ char *tap_query(uint32_t record, const uint32_t *props, int n) {
     g_q.state = 0;  // an unfinished query's channels stay open; harmless, they only report changes
     pthread_mutex_unlock(&g_q.m);
     pthread_mutex_unlock(&g_q.lock);
-    if (!finished) log_line("query: %08x timed out (game not ticking?)", record);
+    if (!finished) log_line("query: timed out (game not ticking?)");
     return j.data;
 }
 
@@ -699,10 +848,16 @@ void tap_install(void) {
     Il2CppClass *receiver = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "GameReceiver");
     Il2CppClass *wrapper = il2cpp_find_class("FM.GamePlugin.dll", "", "FM_GamePlugin_IGamePlugin_NativeWrapper");
     Il2CppClass *typed_value = il2cpp_find_class("SI.Core.dll", "SI.Core", "TypedValue");
+    g_typed_value_class = typed_value;
     Il2CppClass *modes = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "ChannelActionMode");
     Il2CppClass *action = il2cpp_find_class("FM.GamePlugin.dll", "FM.GamePlugin", "ChannelAction");
     g_record_ref_class = il2cpp_find_class("FM.UI.dll", "FM.UI", "DatabaseRecordReference");
     g_string_class = il2cpp_find_class("mscorlib.dll", "System", "String");
+    g_dynref_class = il2cpp_find_class("SI.Bindable.dll", "SI.Bindable", "DynamicReference");
+    g_interop_class = il2cpp_find_class("SI.Interop.dll", "SI.Interop", "InteropReference");
+    g_dynref_get_id = g_dynref_class ? il2cpp_class_get_method_from_name(g_dynref_class, "get_ID", 0) : NULL;
+    g_interop_pairs_off = field_offset(g_interop_class, "m_id");
+    log_line("tap: DynamicReference %s, InteropReference pairs@0x%zx", g_dynref_class ? "found" : "missing", g_interop_pairs_off);
 
     const MethodInfo *response = method(receiver, "SendDataResponse", 3);
     const MethodInfo *event = method(receiver, "SendEvent", 2);
@@ -744,6 +899,7 @@ void tap_install(void) {
 void tap_install(void) { log_line("tap: only supported on Apple Silicon"); }
 int tap_ready(void) { return 0; }
 char *tap_query(uint32_t record, const uint32_t *props, int n) { (void)record; (void)props; (void)n; return NULL; }
+char *tap_query_target(const uint8_t *t, int tl, const uint32_t *props, int n) { (void)t; (void)tl; (void)props; (void)n; return NULL; }
 int tap_seen(uint32_t *out, int cap) { (void)out; (void)cap; return 0; }
 uint32_t tap_focus(uint8_t kind) { (void)kind; return 0; }
 uint32_t tap_guid(void) { return 0; }
