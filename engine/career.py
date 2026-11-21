@@ -56,6 +56,7 @@ class Career:
     date: str
     session: str  # FM's id for the loaded game; changes on every load
     store: Store
+    clock: str = ""  # FM's in-game time ("2028-3-7 09:00"); moves only when the game advances
 
     def summary(self) -> dict:
         return {
@@ -131,6 +132,7 @@ class CareerTracker:
             save = _save_name(game.get("save_name", ""))
             count = game.get("save_count") if isinstance(game.get("save_count"), int) else None
             c.date = game["date"]
+            c.clock = game.get("datetime") or ""
             if session != c.session:
                 self._on_load(c, save, count, game["date"], session)
             else:
@@ -165,6 +167,7 @@ class CareerTracker:
             save_name=save, save_count=count, save_time=None, start=start, date=game["date"], session="",
             store=Store(self._memory_path(key, save)),
         )
+        career.clock = game.get("datetime") or ""
         self._on_load(career, save, count, game["date"], session)
         for k, v in (("manager_name", career.manager_name), ("team_name", career.team_name),
                      ("save_name", save), ("start", start)):

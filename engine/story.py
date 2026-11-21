@@ -13,13 +13,15 @@ Two sources, both read from FM itself (nothing is invented here):
   matters, a routine scouting summary hardly does); people linked in the
   item who are in our squad remember it.
 
+It runs only when FM's in-game clock moves (each hour the game advances), and
+uses no model: all of this is plain code. The model is only called when the
+manager talks to someone, and these events are handed to it then.
+
 Events carry a weight so later steps (proactive messages, social media,
 press questions) can pick the stories that matter. Everything is keyed, so
 running again never duplicates; memory follows saves like everything else.
 """
 from __future__ import annotations
-
-import time
 
 from .bridge import Bridge, BridgeUnavailable, _text
 from .career import Career
@@ -28,7 +30,6 @@ from .fmvalue import target_pairs
 FORM_FIELDS = ("ZaLo", "E2cn", "phIw")  # a player's last-five-matches form (different competitions)
 FIXTURE_FIELDS = ["etdf", "Tmhf", "Twaf", "shxf", "saxf", "srxf", "poNF", "kT1 ", "zKyn", "6dsa", "LmjO"]
 NEWS_FIELDS = ["ltit", "ydob", "AMqC", "spin", "dinu"]
-NEWS_SECONDS = 20     # how often the inbox is checked
 GOOD_RATING = 8.0
 POOR_RATING = 6.0
 MEMORY_DAYS = 90     # older results are kept as events, not memories
@@ -71,15 +72,19 @@ class StoryEngine:
     def __init__(self, bridge: Bridge):
         self.bridge = bridge
         self.names: dict[str, str] = {}
-        self.news_checked = 0.0
+        self.clock: tuple[str, str] | None = None   # (career key, FM in-game time) last processed
         self.matches_checked: tuple[str, str] | None = None   # (career key, game date)
         self.new_news = False
 
     # --- polling -----------------------------------------------------------------
     def poll(self, career: Career) -> None:
-        if time.monotonic() - self.news_checked >= NEWS_SECONDS:
-            self.news_checked = time.monotonic()
-            self._news(career)
+        """Runs only when FM's in-game clock has moved (the player pressed continue);
+        while the game stands still nothing is read. No model is used here."""
+        clock = (career.key, career.clock or career.date)
+        if clock == self.clock:
+            return
+        self.clock = clock
+        self._news(career)
         # Matches: once per game day, and again when news arrives (results come with news).
         if self.matches_checked != (career.key, career.date) or self.new_news:
             self.new_news = False
