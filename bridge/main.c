@@ -19,6 +19,7 @@
 #include "http.h"
 #include "inventory.h"
 #include "log.h"
+#include "overlay.h"
 #include "tap.h"
 
 static char g_game_assembly[1024];
@@ -81,6 +82,7 @@ static void *worker(void *arg) {
     if (dump_wanted("catalog.tsv")) catalog_dump();
     tap_install();
     http_start();
+    overlay_install();
     il2cpp_thread_detach(thread);
     return NULL;
 }
