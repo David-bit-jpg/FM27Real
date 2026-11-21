@@ -41,6 +41,7 @@ GAME_FIELDS = {
     "manager": "MuCG",       # the human manager (person ref)
     "team": "tcMC",          # the human manager's team (team ref)
     "save_name": " 811",     # "\"David Wang-莱斯特城\" (已保存 102 次)"
+    "save_count": " 221",    # 102: how many times this save file has been saved
     "start": " 421",         # "英格兰 - 2026-7-13": database and career start
 }
 

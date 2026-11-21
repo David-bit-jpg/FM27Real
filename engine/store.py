@@ -102,6 +102,20 @@ class Store:
             self._db.execute("ALTER TABLE events ADD COLUMN event_key TEXT")
         self._db.execute("CREATE UNIQUE INDEX IF NOT EXISTS events_key ON events (event_key) WHERE event_key IS NOT NULL")
 
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
+
+    def backup_to(self, path: Path) -> None:
+        """Consistent copy of the whole database (safe while in use)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            dst = sqlite3.connect(path)
+            try:
+                self._db.backup(dst)
+            finally:
+                dst.close()
+
     def _exec(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
             rows = self._db.execute(sql, args).fetchall()
