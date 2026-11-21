@@ -58,6 +58,7 @@ static void set_visible(BOOL shown) {
     } completionHandler:^{
         if (!g_visible) g_panel.hidden = YES;
     }];
+    g_chat_button.hidden = shown || !g_focus;  // the panel covers the button's spot
     if (shown) [g_panel.window makeFirstResponder:g_web];
     else [g_panel.window makeFirstResponder:g_panel.window.contentView];
     log_line("overlay: %s", shown ? "shown" : "hidden");
@@ -184,14 +185,17 @@ static void engine_load(uint32_t person) {
         return;
     }
     NSString *base = g_engine_url, *token = g_engine_token;
-    NSMutableURLRequest *probe = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/api/status"]]];
+    // A cheap endpoint: /api/status reads the career from the game and can take seconds.
+    NSMutableURLRequest *probe = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/api/settings"]]];
     [probe setValue:token forHTTPHeaderField:@"X-Token"];
-    probe.timeoutInterval = 3;
+    probe.timeoutInterval = 10;
     [[NSURLSession.sharedSession dataTaskWithRequest:probe completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
         (void)d;
         NSInteger status = [r isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)r).statusCode : 0;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (e || status != 200) {
+                log_line("overlay: engine not reachable (%s, HTTP %ld)", e ? e.localizedDescription.UTF8String : "ok",
+                         (long)status);
                 g_ui_loaded = NO;
                 [g_web loadHTMLString:offline_page() baseURL:nil];
                 return;
@@ -255,7 +259,7 @@ static void poll_focus(void) {
     uint32_t p = tap_focus(0x01);
     if (p == g_focus) return;
     g_focus = p;
-    g_chat_button.hidden = !p;
+    g_chat_button.hidden = !p || g_visible;
     if (p) {
         set_button_title(@"💬 私聊");
         load_focus(p);
