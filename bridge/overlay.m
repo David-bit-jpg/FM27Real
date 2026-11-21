@@ -18,7 +18,6 @@
 static NSView *g_panel;      // container (rounded, shadowed)
 static NSButton *g_chat_button;  // shown on a player's profile page
 static uint32_t g_focus;     // person whose profile is open (0 if none)
-static NSString *g_focus_name, *g_focus_face;  // name and portrait data URL
 static WKWebView *g_web;
 static BOOL g_visible;
 static const CGFloat kPanelWidth = 440, kMargin = 12;
@@ -99,12 +98,15 @@ static BOOL route_to_panel(NSEvent *e) {
     }
 }
 
+static void open_panel(uint32_t person);
+
 // Hotkeys handled before anything else. Returns YES if consumed.
 static BOOL handle_hotkey(NSEvent *e) {
     if (e.type != NSEventTypeKeyDown) return NO;
     NSEventModifierFlags mods = e.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (mods == NSEventModifierFlagCommand && [e.charactersIgnoringModifiers.lowercaseString isEqualToString:@"j"]) {
-        set_visible(!g_visible);
+        if (g_visible) set_visible(NO);
+        else open_panel(0);
         return YES;
     }
     if (e.keyCode == 53 /* Esc */ && g_visible && panel_has_focus()) {
@@ -142,48 +144,79 @@ static BOOL swap_send_event(Class cls, Class base, IMP hook, IMP *unity, IMP *ba
     return YES;
 }
 
-static NSString *test_page(void) {
+// --- engine UI ------------------------------------------------------------------
+// The panel shows the world engine's page (engine/ui/index.html), served on
+// 127.0.0.1 with the token from engine.json in the data folder.
+static NSString *g_engine_url, *g_engine_token;
+static BOOL g_ui_loaded;
+
+static NSString *offline_page(void) {
     return @"<!doctype html><html><head><meta charset='utf-8'><style>"
-            "body{margin:0;font:14px -apple-system,'PingFang SC',sans-serif;color:#e8ecf4;"
-            "background:linear-gradient(180deg,#1b2a4e,#121a30);height:100vh;display:flex;flex-direction:column}"
-            "header{padding:16px 18px;border-bottom:1px solid #2c3d66;font-weight:600;font-size:16px}"
-            "header small{display:block;font-weight:400;color:#8ea0c8;font-size:12px;margin-top:4px}"
-            "#log{flex:1;overflow:auto;padding:14px 18px}"
-            ".msg{background:#25365f;border-radius:10px;padding:8px 12px;margin:6px 0;max-width:85%}"
-            ".me{background:#7b2cbf;margin-left:auto}"
-            "form{display:flex;gap:8px;padding:12px;border-top:1px solid #2c3d66}"
-            "input{flex:1;border:0;border-radius:8px;padding:10px 12px;background:#0d1426;color:#fff;font-size:14px}"
-            "button{border:0;border-radius:8px;padding:0 16px;background:#d6246e;color:#fff;font-weight:600}"
-            "</style></head><body>"
-            "<header style='display:flex;align-items:center;gap:12px'><img id='face' style='width:56px;height:56px;border-radius:50%;"
-            "object-fit:cover;background:#25365f;display:none'><div><span id='who'>主教练手机</span>"
-            "<small>⌘J 开关 · Esc 关闭 · 聊天功能在 2d/2e 接上</small></div></header>"
-            "<div id='log'><div class='msg'>在下面输入一句话试试。</div></div>"
-            "<form onsubmit=\"var i=document.getElementById('t');if(!i.value)return false;"
-            "var d=document.createElement('div');d.className='msg me';d.textContent=i.value;"
-            "document.getElementById('log').appendChild(d);i.value='';return false\">"
-            "<input id='t' placeholder='输入消息…' autofocus><button>发送</button></form>"
-            "<script>function setPerson(n,img){document.getElementById('who').textContent=n;"
-            "var f=document.getElementById('face');if(img){f.src=img;f.style.display='block'}else{f.style.display='none'}}</script>"
-            "</body></html>";
+            "body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;"
+            "font:14px -apple-system,'PingFang SC',sans-serif;color:#e8ecf4;background:linear-gradient(180deg,#1b2a4e,#121a30)}"
+            "div{max-width:320px;line-height:1.6}b{font-size:16px}code{background:#0d1426;padding:2px 6px;border-radius:4px}"
+            "small{color:#8ea0c8}</style></head><body><div><b>FM27Real 引擎没有运行</b><br><br>"
+            "用 <code>scripts/launch.sh</code> 启动游戏会自动启动引擎；<br>也可以在终端运行 <code>python3 -m engine</code>。"
+            "<br><br><small>The FM27Real engine is not running. Start the game with scripts/launch.sh, "
+            "or run python3 -m engine.</small><br><br><small>⌘J 关闭 · ⌘J to close</small></div></body></html>";
 }
 
-static NSString *js_string(NSString *s) {
-    NSData *d = [NSJSONSerialization dataWithJSONObject:@[ s ?: @"" ] options:0 error:nil];
-    NSString *arr = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
-    return [arr substringWithRange:NSMakeRange(1, arr.length - 2)];  // strip [ ]
+static BOOL read_engine_file(void) {
+    NSString *path = [NSString stringWithFormat:@"%s/engine.json", g_data_dir];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    NSDictionary *d = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    if (![d isKindOfClass:NSDictionary.class] || ![d[@"url"] isKindOfClass:NSString.class] ||
+        ![d[@"token"] isKindOfClass:NSString.class])
+        return NO;
+    BOOL changed = g_engine_token && ![g_engine_token isEqualToString:d[@"token"]];
+    g_engine_url = d[@"url"];
+    g_engine_token = d[@"token"];
+    if (changed) g_ui_loaded = NO;  // the engine restarted: the loaded page has a stale token
+    return YES;
 }
 
-static void show_focus_in_panel(void) {
-    NSString *js = g_focus ? [NSString stringWithFormat:@"setPerson(%@,%@)", js_string(g_focus_name), js_string(g_focus_face)]
-                           : @"setPerson('主教练手机','')";
-    [g_web evaluateJavaScript:js completionHandler:nil];
+// Loads the engine page (optionally straight into a conversation), or an
+// explanation when the engine is not reachable.
+static void engine_load(uint32_t person) {
+    if (!read_engine_file()) {
+        g_ui_loaded = NO;
+        [g_web loadHTMLString:offline_page() baseURL:nil];
+        return;
+    }
+    NSString *base = g_engine_url, *token = g_engine_token;
+    NSMutableURLRequest *probe = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/api/status"]]];
+    [probe setValue:token forHTTPHeaderField:@"X-Token"];
+    probe.timeoutInterval = 3;
+    [[NSURLSession.sharedSession dataTaskWithRequest:probe completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        (void)d;
+        NSInteger status = [r isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)r).statusCode : 0;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (e || status != 200) {
+                g_ui_loaded = NO;
+                [g_web loadHTMLString:offline_page() baseURL:nil];
+                return;
+            }
+            NSString *url = [NSString stringWithFormat:@"%@/ui?token=%@", base, token];
+            if (person) url = [url stringByAppendingFormat:@"&person=%08x", person];
+            [g_web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:url]]];
+            g_ui_loaded = YES;
+        });
+    }] resume];
+}
+
+// Shows the panel; with a person, opens that conversation.
+static void open_panel(uint32_t person) {
+    read_engine_file();
+    if (g_ui_loaded && person)
+        [g_web evaluateJavaScript:[NSString stringWithFormat:@"openPerson('%08x')", person] completionHandler:nil];
+    else if (!g_ui_loaded)
+        engine_load(person);
+    set_visible(YES);
 }
 
 static void chat_clicked(id self, SEL _cmd, id sender) {
     (void)self; (void)_cmd; (void)sender;
-    show_focus_in_panel();
-    set_visible(YES);
+    open_panel(g_focus);
 }
 
 static void set_button_title(NSString *title) {
@@ -196,13 +229,13 @@ static void set_button_title(NSString *title) {
     g_chat_button.frame = NSMakeRect(host.bounds.size.width - w - 24, host.bounds.size.height - 112 - h, w, h);
 }
 
-// Looks up the focused person's name and portrait off the main thread
+// Looks up the focused person's name for the button, off the main thread
 // (queries wait for the game's main thread, so they must not run on it).
 static void load_focus(uint32_t person) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        uint32_t props[2] = {0x6e616d65 /* eman */, 0x756e6964 /* dinu */};
-        char *json = tap_query(person, props, 2);
-        NSString *name = nil, *face = nil;
+        uint32_t props[1] = {0x6e616d65 /* eman */};
+        char *json = tap_query(person, props, 1);
+        NSString *name = nil;
         if (json) {
             NSDictionary *d = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:json length:strlen(json)]
                                                               options:0 error:nil];
@@ -210,21 +243,10 @@ static void load_focus(uint32_t person) {
             id n = d[@"eman"];
             name = [n isKindOfClass:NSDictionary.class] ? n[@"text"] : ([n isKindOfClass:NSString.class] ? n : nil);
             name = [name stringByReplacingOccurrencesOfString:@"\u200b" withString:@""];
-            NSNumber *uid = [d[@"dinu"] isKindOfClass:NSNumber.class] ? d[@"dinu"] : nil;
-            if (uid) {
-                NSString *path = [NSString stringWithFormat:
-                    @"%@/Library/Application Support/Sports Interactive/Football Manager 27/graphics/faces/face_%lld.png",
-                    NSHomeDirectory(), uid.longLongValue];
-                NSData *png = [NSData dataWithContentsOfFile:path];
-                if (png) face = [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]];
-            }
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (g_focus != person) return;
-            g_focus_name = name ?: @"球员";
-            g_focus_face = face ?: @"";
-            set_button_title([NSString stringWithFormat:@"💬 和 %@ 私聊", g_focus_name]);
-            if (g_visible) show_focus_in_panel();
+            set_button_title([NSString stringWithFormat:@"💬 和 %@ 私聊", name ?: @"球员"]);
         });
     });
 }
@@ -233,7 +255,6 @@ static void poll_focus(void) {
     uint32_t p = tap_focus(0x01);
     if (p == g_focus) return;
     g_focus = p;
-    g_focus_name = g_focus_face = nil;
     g_chat_button.hidden = !p;
     if (p) {
         set_button_title(@"💬 私聊");
@@ -264,7 +285,6 @@ static void install_on_main(int attempt) {
     WKWebViewConfiguration *cfg = [WKWebViewConfiguration new];
     g_web = [[WKWebView alloc] initWithFrame:g_panel.bounds configuration:cfg];
     g_web.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [g_web loadHTMLString:test_page() baseURL:nil];
     [g_panel addSubview:g_web];
     [host addSubview:g_panel positioned:NSWindowAbove relativeTo:nil];
 

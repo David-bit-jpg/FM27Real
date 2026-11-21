@@ -135,6 +135,13 @@ class Store:
             self._db.commit()
             return int(cur.lastrowid)
 
+    def recent_threads(self, limit: int = 20) -> list[tuple[str, str]]:
+        """(person id, last message text), most recent conversation first."""
+        rows = self._exec(
+            "SELECT person_id, text FROM messages WHERE id IN "
+            "(SELECT MAX(id) FROM messages GROUP BY person_id) ORDER BY id DESC LIMIT ?", (limit,))
+        return [(r["person_id"], r["text"]) for r in rows]
+
     # --- canon and memories -------------------------------------------------------
     def canon(self, person_id: str) -> list[dict]:
         return [dict(r) for r in self._exec(

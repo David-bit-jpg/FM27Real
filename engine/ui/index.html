@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FM27Real</title>
+<style>
+  :root {
+    --bg: #121a30; --bg2: #1b2a4e; --panel: #1a2747; --line: #2c3d66; --text: #e8ecf4; --muted: #8ea0c8;
+    --accent: #d6246e; --mine: #6a2fb8; --theirs: #25365f; --good: #3fbf7f; --bad: #e05561; --warn: #e3a33b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font: 14px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; color: var(--text);
+         background: linear-gradient(180deg, var(--bg2), var(--bg)); display: flex; flex-direction: column;
+         overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  input, select { font: inherit; color: var(--text); background: #0d1426; border: 1px solid var(--line);
+                  border-radius: 8px; padding: 9px 11px; width: 100%; outline: none; }
+  input:focus, select:focus { border-color: #4b67a8; }
+
+  header.top { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  header.top .title { font-weight: 650; font-size: 15px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .iconbtn { background: none; border: 0; padding: 4px 8px; border-radius: 6px; color: var(--muted); font-size: 18px; }
+  .iconbtn:hover { background: #ffffff12; color: var(--text); }
+  .tabs { display: flex; gap: 4px; }
+  .tab { background: none; border: 0; padding: 6px 10px; border-radius: 6px; color: var(--muted); }
+  .tab.on { background: #ffffff14; color: var(--text); }
+
+  main { flex: 1; overflow: auto; }
+  .banner { margin: 10px 14px 0; padding: 9px 12px; border-radius: 8px; background: #3a2a12; color: #f3d39b; font-size: 13px; }
+  .banner.err { background: #3d1820; color: #f4b3bb; }
+  .section { padding: 12px 14px 4px; color: var(--muted); font-size: 12px; letter-spacing: .04em; }
+
+  .person { display: flex; align-items: center; gap: 11px; padding: 9px 14px; cursor: pointer; }
+  .person:hover { background: #ffffff0d; }
+  .person .who { flex: 1; min-width: 0; }
+  .person .name { font-weight: 600; }
+  .person .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; background: #2b3d6b; object-fit: cover;
+            display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 14px; color: #cfd8ee; overflow: hidden; }
+  .avatar.big { width: 58px; height: 58px; font-size: 18px; }
+
+  .chat { display: flex; flex-direction: column; height: 100%; }
+  .chat-head { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .chat-head .name { font-size: 16px; font-weight: 650; }
+  .chat-head .sub { color: var(--muted); font-size: 12px; }
+  .rel { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 8px; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .bar { position: relative; height: 5px; background: #0d1426; border-radius: 3px; min-width: 90px; }
+  .bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+  .bar::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: #ffffff33; }
+  .log { flex: 1; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .msg { max-width: 82%; padding: 8px 12px; border-radius: 14px; background: var(--theirs); white-space: pre-wrap; word-break: break-word; }
+  .msg.me { align-self: flex-end; background: var(--mine); border-bottom-right-radius: 4px; }
+  .msg.them { border-bottom-left-radius: 4px; }
+  .day { align-self: center; color: var(--muted); font-size: 11px; margin: 6px 0 2px; }
+  .typing { color: var(--muted); font-size: 12px; padding: 0 2px; }
+  .failed { align-self: flex-end; color: var(--bad); font-size: 12px; }
+  .failed button { background: none; border: 0; color: var(--text); text-decoration: underline; padding: 0 4px; }
+  form.send { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  form.send button { border: 0; border-radius: 8px; padding: 0 16px; background: var(--accent); color: #fff; font-weight: 650;
+                     white-space: nowrap; flex: none; }
+  form.send button:disabled { opacity: .5; cursor: default; }
+
+  .settings { padding: 6px 14px 20px; }
+  .field { margin: 12px 0; }
+  .field label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+  .seg { display: inline-flex; background: #0d1426; border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+  .seg button { background: none; border: 0; padding: 6px 14px; border-radius: 6px; color: var(--muted); }
+  .seg button.on { background: #2b3d6b; color: var(--text); }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .btn { border: 1px solid var(--line); background: #22335c; border-radius: 8px; padding: 9px 12px; white-space: nowrap; flex: none; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 650; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 5px; }
+  .ok { color: var(--good); } .bad { color: var(--bad); }
+  .empty { color: var(--muted); padding: 30px 14px; text-align: center; }
+</style>
+</head>
+<body>
+<header class="top">
+  <button class="iconbtn" id="back" hidden>‹</button>
+  <div class="title" id="title"></div>
+  <div class="tabs">
+    <button class="tab" id="tab-home"></button>
+    <button class="tab" id="tab-settings"></button>
+  </div>
+</header>
+<div id="banner" class="banner" hidden></div>
+<main id="main"></main>
+
+<script>
+"use strict";
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const T = {
+  zh: { phone: "主教练手机", messages: "消息", settings: "设置", recent: "最近聊天", squad: "一线队",
+        noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
+        typing: "正在输入…", failed: "没发出去", retry: "重发", trust: "信任", liking: "好感", respect: "尊重",
+        language: "界面语言", model: "模型", provider: "提供方", apiKey: "API key", keySaved: "已保存", keyKeep: "留空则保留已保存的 key",
+        keyNone: "这个选项不需要 key；粘贴别家的 key 会自动切换", pickProvider: "请在上面选这个 key 属于哪家", baseUrl: "接口地址", modelName: "模型名称", fetchModels: "获取模型列表",
+        test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
+        noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
+        loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
+  en: { phone: "Manager's phone", messages: "Messages", settings: "Settings", recent: "Recent", squad: "First team",
+        noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
+        typing: "typing…", failed: "Not sent", retry: "Retry", trust: "Trust", liking: "Liking", respect: "Respect",
+        language: "Language", model: "Model", provider: "Provider", apiKey: "API key", keySaved: "Saved", keyKeep: "Leave empty to keep the saved key",
+        keyNone: "No key needed (paste a key to switch)", pickProvider: "Choose which provider this key belongs to above", baseUrl: "API address", modelName: "Model", fetchModels: "List models",
+        test: "Test connection", save: "Save", saved: "Saved", testing: "Testing…", testOk: "Connected", detected: "Recognised as",
+        noBridge: "No career loaded yet. Load a save and your team appears here.", noEngine: "Cannot reach the engine.", modelErr: "Model error: ",
+        loading: "Loading…", keyPrivacy: "Your key stays on this computer and is only sent to the provider you choose." },
+};
+let lang = "zh", view = "home", current = null, providers = {}, settings = {};
+const t = k => (T[lang] || T.zh)[k] || k;
+const $ = id => document.getElementById(id);
+
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null && v !== false) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return e;
+}
+
+async function api(path, body) {
+  const opts = { headers: { "X-Token": TOKEN } };
+  if (body !== undefined) { opts.method = "POST"; opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
+  let res;
+  try { res = await fetch(path, opts); } catch (e) { throw Object.assign(new Error(t("noEngine")), { code: "engine" }); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { code: data.code, status: res.status });
+  return data;
+}
+
+function avatar(p, big) {
+  const cls = "avatar" + (big ? " big" : "");
+  const initials = (p.name || "?").replace(/\s+/g, "").slice(0, big ? 2 : 1);
+  if (p.uid && p.has_face !== false) {
+    const img = el("img", { class: cls, src: `/face/${p.uid}?token=${encodeURIComponent(TOKEN)}`, alt: "" });
+    img.onerror = () => img.replaceWith(el("div", { class: cls }, initials));
+    return img;
+  }
+  return el("div", { class: cls }, initials);
+}
+
+function banner(text, isErr) {
+  const b = $("banner");
+  b.hidden = !text; b.textContent = text || ""; b.className = "banner" + (isErr ? " err" : "");
+}
+
+function setHeader(title, showBack) {
+  $("title").textContent = title;
+  $("back").hidden = !showBack;
+  $("tab-home").textContent = t("messages"); $("tab-settings").textContent = t("settings");
+  $("tab-home").classList.toggle("on", view === "home" || view === "chat");
+  $("tab-settings").classList.toggle("on", view === "settings");
+  document.documentElement.lang = lang;
+}
+
+// --- home ----------------------------------------------------------------------
+async function showHome() {
+  view = "home"; current = null; setHeader(t("phone"), false);
+  const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("loading")));
+  let data;
+  try { data = await api("/api/contacts"); banner(""); }
+  catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
+  if (view !== "home") return;
+  const row = (p, sub) => el("div", { class: "person", onclick: () => openPerson(p.id) }, avatar(p),
+    el("div", { class: "who" }, el("div", { class: "name" }, p.name), el("div", { class: "sub" }, sub)));
+  main.replaceChildren(...[
+    el("div", { class: "section" }, t("recent")),
+    data.recent.length ? data.recent.map(p => row(p, p.last)) : el("div", { class: "empty" }, t("noRecent")),
+    el("div", { class: "section" }, t("squad")),
+    data.squad.map(p => row(p, p.position))].flat());
+}
+
+// --- chat ----------------------------------------------------------------------
+function relBars(rel) {
+  const box = el("div", { class: "rel" });
+  for (const k of ["trust", "liking", "respect"]) {
+    const v = rel[k] || 0, w = Math.min(Math.abs(v), 20) * 2.5;
+    const bar = el("i", {}); bar.style.background = v >= 0 ? "var(--good)" : "var(--bad)";
+    bar.style.left = v >= 0 ? "50%" : (50 - w) + "%"; bar.style.width = w + "%";
+    box.append(el("span", {}, t(k)), el("div", { class: "bar" }, bar), el("span", {}, (v > 0 ? "+" : "") + v));
+  }
+  return box;
+}
+
+async function openPerson(id) {
+  view = "chat"; current = id; setHeader("", true);
+  const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("loading")));
+  let person, messages;
+  try { [person, messages] = await Promise.all([api(`/api/person/${id}`), api(`/api/messages/${id}`)]); banner(""); }
+  catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
+  if (current !== id) return;
+  setHeader(person.name, true);
+  const log = el("div", { class: "log" });
+  const head = el("div", { class: "chat-head" }, avatar(person, true),
+    el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name" }, person.name),
+      el("div", { class: "sub" }, [person.position, person.team_name, person.age && `${person.age}`].filter(Boolean).join(" · ")),
+      relBars(person.relation || {})));
+  const input = el("input", { placeholder: t("placeholder"), autocomplete: "off" });
+  const sendBtn = el("button", { type: "submit" }, t("send"));
+  const form = el("form", { class: "send" }, input, sendBtn);
+  let lastDay = null;
+  const addMsg = m => {
+    if (m.game_date && m.game_date !== lastDay) { log.append(el("div", { class: "day" }, m.game_date)); lastDay = m.game_date; }
+    log.append(el("div", { class: "msg " + (m.sender === "manager" ? "me" : "them") }, m.text));
+  };
+  messages.forEach(addMsg);
+  const send = async text => {
+    const mine = el("div", { class: "msg me" }, text); log.append(mine);
+    const typing = el("div", { class: "typing" }, `${person.name} ${t("typing")}`); log.append(typing);
+    log.scrollTop = log.scrollHeight; input.disabled = sendBtn.disabled = true;
+    try {
+      const r = await api(`/api/messages/${id}`, { text });
+      typing.remove(); if (current !== id) return;
+      log.append(el("div", { class: "msg them" }, r.reply));
+      const fresh = await api(`/api/person/${id}`); head.querySelector(".rel").replaceWith(relBars(fresh.relation || {}));
+    } catch (e) {
+      typing.remove(); mine.remove();
+      log.append(el("div", { class: "failed" }, `${t("failed")}: ${e.code === "model" ? t("modelErr") : ""}${e.message}`,
+        el("button", { type: "button", onclick: ev => { ev.target.parentElement.remove(); send(text); } }, t("retry"))));
+    } finally {
+      input.disabled = sendBtn.disabled = false; input.focus(); log.scrollTop = log.scrollHeight;
+    }
+  };
+  form.addEventListener("submit", ev => { ev.preventDefault(); const text = input.value.trim(); if (!text) return; input.value = ""; send(text); });
+  main.replaceChildren(el("div", { class: "chat" }, head, log, form));
+  log.scrollTop = log.scrollHeight; input.focus();
+}
+
+// --- settings ------------------------------------------------------------------
+async function showSettings() {
+  view = "settings"; current = null; setHeader(t("settings"), false);
+  try { [settings, providers] = await Promise.all([api("/api/settings"), api("/api/providers")]); }
+  catch (e) { $("main").replaceChildren(el("div", { class: "empty" }, e.message)); return; }
+  const draft = { provider: settings.provider, model: settings.model || "", base_url: settings.base_url || "", api_key: "" };
+  const label = p => (lang === "en" ? p.label_en : p.label) || p.label;
+  const status = el("div", { class: "hint" });
+
+  const langSeg = el("div", { class: "seg" }, [["zh", "中文"], ["en", "English"]].map(([code, name]) =>
+    el("button", { class: lang === code ? "on" : "", onclick: async () => {
+      await api("/api/settings", { language: code }); lang = code; showSettings(); } }, name)));
+
+  const providerSel = el("select", {}, Object.entries(providers).map(([id, p]) =>
+    el("option", { value: id, selected: id === draft.provider }, label(p))));
+  const keyInput = el("input", { type: "password", autocomplete: "off" });
+  const keyHint = el("div", { class: "hint" });
+  const baseInput = el("input", { placeholder: "https://…/v1" });
+  const baseField = el("div", { class: "field" }, el("label", {}, t("baseUrl")), baseInput);
+  const modelInput = el("input", { list: "model-list" });
+  const modelList = el("datalist", { id: "model-list" });
+
+  const refresh = () => {
+    const p = providers[draft.provider] || {};
+    const noKey = !p.needs_key && draft.provider !== "custom";
+    keyInput.placeholder = noKey ? t("keyNone") : (settings.api_key_set && draft.provider === settings.provider ? `${t("keySaved")} ${settings.api_key_hint}` : "sk-…");
+    keyHint.textContent = (settings.api_key_set && !noKey ? t("keyKeep") + " · " : "") + t("keyPrivacy");
+    baseField.hidden = p.kind !== "openai";
+    baseInput.value = draft.base_url || p.base_url || "";
+    modelInput.value = draft.model || p.model || "";
+    modelInput.placeholder = p.model || "";
+  };
+  providerSel.onchange = () => { draft.provider = providerSel.value; draft.base_url = ""; draft.model = ""; modelList.replaceChildren(); refresh(); };
+  keyInput.oninput = () => {
+    draft.api_key = keyInput.value.trim();
+    const v = draft.api_key, guess = v.startsWith("sk-ant-") ? "anthropic" : v.startsWith("sk-or-") ? "openrouter" : v.startsWith("AIza") ? "gemini" : null;
+    if (guess && guess !== draft.provider) { draft.provider = guess; providerSel.value = guess; draft.model = ""; draft.base_url = ""; refresh(); keyInput.value = v;
+      status.textContent = `${t("detected")} ${label(providers[guess])}`; status.className = "hint ok"; }
+    else if (!guess && v && !(providers[draft.provider] || {}).needs_key && draft.provider !== "custom") {
+      status.textContent = t("pickProvider"); status.className = "hint"; }
+  };
+  baseInput.oninput = () => { draft.base_url = baseInput.value.trim(); };
+  modelInput.oninput = () => { draft.model = modelInput.value.trim(); };
+  const body = () => ({ provider: draft.provider, model: draft.model || modelInput.value.trim(),
+                        base_url: baseField.hidden ? "" : (draft.base_url || baseInput.value.trim()), api_key: draft.api_key });
+
+  const fetchBtn = el("button", { class: "btn", type: "button", onclick: async () => {
+    status.textContent = t("loading"); status.className = "hint";
+    try { const r = await api("/api/models", body()); modelList.replaceChildren(...r.models.filter(Boolean).map(m => el("option", { value: m })));
+      status.textContent = `${r.models.length} models`; }
+    catch (e) { status.textContent = e.message; status.className = "hint bad"; } } }, t("fetchModels"));
+  const testBtn = el("button", { class: "btn", type: "button", onclick: async () => {
+    status.textContent = t("testing"); status.className = "hint";
+    try { const r = await api("/api/test", body());
+      status.textContent = r.ok ? t("testOk") : r.error; status.className = "hint " + (r.ok ? "ok" : "bad"); }
+    catch (e) { status.textContent = e.message; status.className = "hint bad"; } } }, t("test"));
+  const saveBtn = el("button", { class: "btn primary", type: "button", onclick: async () => {
+    try { settings = await api("/api/settings", body()); draft.api_key = ""; keyInput.value = "";
+      status.textContent = t("saved"); status.className = "hint ok"; refresh(); }
+    catch (e) { status.textContent = e.message; status.className = "hint bad"; } } }, t("save"));
+
+  refresh();
+  $("main").replaceChildren(el("div", { class: "settings" },
+    el("div", { class: "field" }, el("label", {}, t("language")), langSeg),
+    el("div", { class: "section", style: "padding:14px 0 0" }, t("model")),
+    el("div", { class: "field" }, el("label", {}, t("provider")), providerSel),
+    el("div", { class: "field" }, el("label", {}, t("apiKey")), keyInput, keyHint),
+    baseField,
+    el("div", { class: "field" }, el("label", {}, t("modelName")), el("div", { class: "row" }, modelInput, fetchBtn), modelList),
+    el("div", { class: "row", style: "margin-top:16px" }, testBtn, saveBtn),
+    status));
+}
+
+// --- entry points (also called by the in-game overlay) ------------------------------
+window.openPerson = openPerson;
+window.openHome = showHome;
+$("tab-home").onclick = showHome;
+$("tab-settings").onclick = showSettings;
+$("back").onclick = showHome;
+
+(async () => {
+  try { const s = await api("/api/status"); lang = s.settings.language || "zh";
+    if (!s.bridge) banner(t("noBridge")); }
+  catch (e) { banner(e.message, true); }
+  const person = new URLSearchParams(location.search).get("person");
+  if (person) openPerson(person); else showHome();
+})();
+</script>
+</body>
+</html>

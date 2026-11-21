@@ -27,7 +27,7 @@ make -C bridge
 
 ## 运行
 
-先打开 Steam，再用启动器启动游戏（不要在 Steam 的「启动选项」里设置，Mac 版 Steam 不支持环境变量写法，会报 OS Error 260）：
+先打开 Steam，再用启动器启动游戏（不要在 Steam 的「启动选项」里设置，Mac 版 Steam 不支持环境变量写法，会报 OS Error 260）。启动器会同时启动世界引擎，游戏退出时一起关闭：
 
 ```bash
 ./scripts/launch.sh
@@ -65,6 +65,12 @@ python3 -m engine person 01049638
 ```
 
 每个生涯一个数据库：`FM27Real/careers/<主教练 UID>-<开档标识>.sqlite`。
+
+## 游戏内面板
+
+- 打开球员资料页，右上角出现「💬 和 某某 私聊」按钮；⌘J 打开主教练手机（最近聊天、一线队），Esc 关闭。
+- 「设置」里切换中文/English，选择模型：Claude 账号（本机 Claude Code，免 key）、Anthropic API、OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、Gemini、OpenRouter、本地 Ollama 或自定义接口。粘贴 key 即可，能识别的会自动选好提供方。
+- API key 只保存在本机 `settings.json`（仅本用户可读），只发给你选的提供方。用 Anthropic API 需要先 `pip install anthropic`。
 
 ## 环境
 
