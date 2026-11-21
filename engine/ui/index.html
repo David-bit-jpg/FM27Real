@@ -75,6 +75,22 @@
   .hint { color: var(--muted); font-size: 12px; margin-top: 5px; }
   .ok { color: var(--good); } .bad { color: var(--bad); }
   .empty { color: var(--muted); padding: 30px 14px; text-align: center; }
+
+  .feed { padding: 4px 0 16px; }
+  .card { margin: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
+  .card .meta { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .card .head { font-weight: 650; }
+  .card .body { color: #c7d0e4; font-size: 13px; margin-top: 4px; white-space: pre-wrap; display: -webkit-box;
+                -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+  .card .body.open { display: block; }
+  .score { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
+  .score .team { flex: 1; } .score .team.r { text-align: right; }
+  .score .num { font-size: 18px; padding: 0 6px; }
+  .card.win { border-left: 3px solid var(--good); } .card.loss { border-left: 3px solid var(--bad); } .card.draw { border-left: 3px solid var(--warn); }
+  .link { color: #9fc0ff; cursor: pointer; } .link:hover { text-decoration: underline; }
+  .chips { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .filter { display: flex; justify-content: flex-end; padding: 8px 14px 0; }
+  .filter button { background: none; border: 0; color: var(--muted); font-size: 12px; text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -83,6 +99,7 @@
   <div class="title" id="title"></div>
   <div class="tabs">
     <button class="tab" id="tab-home"></button>
+    <button class="tab" id="tab-feed"></button>
     <button class="tab" id="tab-settings"></button>
   </div>
 </header>
@@ -93,7 +110,8 @@
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
-  zh: { phone: "主教练手机", messages: "消息", settings: "设置", recent: "最近聊天", squad: "一线队",
+  zh: { phone: "主教练手机", messages: "消息", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
+        potm: "全场最佳", scorers: "进球", showAll: "显示全部收件箱", showImportant: "只看重要的", results: { "赢了": "胜", "输了": "负", "打平": "平" }, settings: "设置", recent: "最近聊天", squad: "一线队",
         noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
         typing: "正在输入…", failed: "没发出去", retry: "重发", typingSpoken: "正在想怎么回答…", fmTalk: "FM 谈话",
         moods: { happy: "心情不错", neutral: "神色平静", worried: "有些担心", annoyed: "有点不耐烦", angry: "明显不高兴", sad: "有些失落", excited: "很兴奋" },
@@ -102,7 +120,8 @@ const T = {
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
-  en: { phone: "Manager's phone", messages: "Messages", settings: "Settings", recent: "Recent", squad: "First team",
+  en: { phone: "Manager's phone", messages: "Messages", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
+        potm: "Player of the match", scorers: "Goals", showAll: "Show whole inbox", showImportant: "Important only", results: { "赢了": "W", "输了": "L", "打平": "D" }, settings: "Settings", recent: "Recent", squad: "First team",
         noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
         typing: "typing…", failed: "Not sent", retry: "Retry", typingSpoken: "is thinking…", fmTalk: "FM conversation",
         moods: { happy: "In good spirits", neutral: "Calm", worried: "A little worried", annoyed: "A bit impatient", angry: "Clearly unhappy", sad: "Downcast", excited: "Excited" },
@@ -123,7 +142,7 @@ function el(tag, attrs = {}, ...children) {
     else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else if (v !== undefined && v !== null && v !== false) e.setAttribute(k, v === true ? "" : v);
   }
-  for (const c of children.flat()) if (c !== null && c !== undefined) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  for (const c of children.flat(Infinity)) if (c !== null && c !== undefined) e.append(c.nodeType ? c : document.createTextNode(String(c)));
   return e;
 }
 
@@ -156,7 +175,8 @@ function banner(text, isErr) {
 function setHeader(title, showBack) {
   $("title").textContent = title;
   $("back").hidden = !showBack;
-  $("tab-home").textContent = t("messages"); $("tab-settings").textContent = t("settings");
+  $("tab-home").textContent = t("messages"); $("tab-settings").textContent = t("settings"); $("tab-feed").textContent = t("feed");
+  $("tab-feed").classList.toggle("on", view === "feed");
   $("tab-home").classList.toggle("on", view === "home" || view === "chat");
   $("tab-settings").classList.toggle("on", view === "settings");
   document.documentElement.lang = lang;
@@ -177,6 +197,38 @@ async function showHome() {
     data.recent.length ? data.recent.map(p => row(p, p.last)) : el("div", { class: "empty" }, t("noRecent")),
     el("div", { class: "section" }, t("squad")),
     data.squad.map(p => row(p, p.position))].flat());
+}
+
+// --- feed ----------------------------------------------------------------------
+let feedAll = false;
+async function showFeed() {
+  view = "feed"; current = null; setHeader(t("feed"), false);
+  const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("loading")));
+  let data;
+  try { data = await api("/api/feed" + (feedAll ? "?all=1" : "")); banner(""); }
+  catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
+  if (view !== "feed") return;
+  const who = (id, name) => id ? el("span", { class: "link", onclick: () => openPerson(id) }, name || id) : (name || "");
+  const card = it => {
+    if (it.kind === "match") {
+      const cls = { "赢了": "win", "输了": "loss", "打平": "draw" }[it.result] || "";
+      const goals = (it.goals || []).map(g => [who(g.scorer, g.name), ` ${g.minute || ""}`]);
+      return el("div", { class: "card " + cls },
+        el("div", { class: "meta" }, `${it.date} · ${it.competition || ""}`),
+        el("div", { class: "score" }, el("span", { class: "team r" }, it.home_name),
+          el("span", { class: "num" }, `${it.score[0]} - ${it.score[1]}`), el("span", { class: "team" }, it.away_name)),
+        goals.length ? el("div", { class: "chips" }, `${t("scorers")}：`, goals.map((g, i) => i ? ["，", g] : g)) : null,
+        it.player_of_match ? el("div", { class: "chips" }, `${t("potm")}：`, who(it.player_of_match, it.player_of_match_name)) : null);
+    }
+    const body = el("div", { class: "body" }, it.body || "");
+    body.onclick = () => body.classList.toggle("open");
+    return el("div", { class: "card" }, el("div", { class: "meta" }, it.date),
+      el("div", { class: "head" }, it.title), it.body ? body : null,
+      (it.people || []).length ? el("div", { class: "chips" }, it.people.map((p, i) => [i ? " · " : "", who(p.id, p.name)])) : null);
+  };
+  main.replaceChildren(el("div", { class: "feed" },
+    el("div", { class: "filter" }, el("button", { onclick: () => { feedAll = !feedAll; showFeed(); } }, feedAll ? t("showImportant") : t("showAll"))),
+    data.items.length ? data.items.map(card) : el("div", { class: "empty" }, t("noFeed"))));
 }
 
 // --- chat ----------------------------------------------------------------------
@@ -316,6 +368,8 @@ window.openPerson = openPerson;
 window.openHome = showHome;
 $("tab-home").onclick = showHome;
 $("tab-settings").onclick = showSettings;
+$("tab-feed").onclick = showFeed;
+window.openFeed = showFeed;
 $("back").onclick = showHome;
 
 (async () => {

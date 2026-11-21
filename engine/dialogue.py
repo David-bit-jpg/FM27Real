@@ -9,6 +9,7 @@ engine; the model may add small life details, which become canon.
 from __future__ import annotations
 
 from . import memory as mem
+from . import story
 from .career import Career
 from .model import ModelError, Provider
 
@@ -66,7 +67,7 @@ def _english_level(languages: str) -> str:
 
 
 def build_system(snap: dict, career: Career, canon: list[dict], memories: list[dict], relation: dict,
-                 language: str) -> str:
+                 language: str, world: list[str] | None = None) -> str:
     social = snap.get("social") or {}
     origin = snap.get("origin") or {}
     friends = [f"{f['name']} ({f['relation']})" for f in social.get("favoured") or []]
@@ -104,6 +105,7 @@ def build_system(snap: dict, career: Career, canon: list[dict], memories: list[d
     ])
     canon_lines = _lines(f"{c['key']}: {c['value']}" for c in canon) or "- (none yet)"
     memory_lines = _lines(f"[{m['game_date']}] {m['text']}" for m in memories) or "- (none yet)"
+    world_lines = _lines(world or []) or "- (nothing notable)"
     out_lang = LANGUAGE_NAMES.get(language, "Simplified Chinese")
 
     return f"""You are {snap.get('name')}, a real person in the world of Football Manager 27. You are texting \
@@ -123,6 +125,9 @@ BACKGROUND:
 
 LIFE DETAILS YOU HAVE ALREADY MENTIONED (canon; stay consistent):
 {canon_lines}
+
+RECENTLY AT THE CLUB (results and news everyone knows about):
+{world_lines}
 
 WHAT YOU REMEMBER (conversations, matches, training, things you heard; strongest first in your mind):
 {memory_lines}
@@ -202,7 +207,7 @@ def converse(model: Provider, career: Career, snap: dict, text: str, language: s
     canon = store.canon(person_id)
     memories = mem.recall(store.memories(person_id), career.date)
     relation = store.relation(person_id)
-    system = build_system(snap, career, canon, memories, relation, language)
+    system = build_system(snap, career, canon, memories, relation, language, story.recent_world(career))
     prompt = build_prompt(history, career.manager_name, snap.get("name", ""), text)
     # Ask first: if the model fails, nothing is stored and the manager can resend.
     result = validate(model.complete(system, prompt, REPLY_SCHEMA))

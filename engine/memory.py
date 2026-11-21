@@ -29,7 +29,7 @@ def recall(memories: list[dict], today: str, n: int = RECALL, floor: float = 0.1
     """The n strongest memories still above the floor, in date order."""
     scored = [(strength(m, today), i, m) for i, m in enumerate(memories)]
     kept = sorted((s for s in scored if s[0] >= floor), reverse=True)[:n]
-    return [m for _, _, m in sorted(kept, key=lambda s: s[1])]
+    return [m for _, _, m in sorted(kept, key=lambda s: (s[2].get("game_date") or "", s[1]))]
 
 
 def relation_words(value: int) -> str:

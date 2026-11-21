@@ -91,3 +91,15 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
 ## 文本格式
 
 带链接的文字：`\x01` + base64（被链接对象的序列化引用，含 `ferd`）+ `\x02显示文字\x01`。
+
+## Matches and news (2026-11-21)
+
+- A player's last-five form: `ZaLo` / `E2cn` / `phIw` (LastFiveMatchesFormReference) → `XkGV` rows with
+  `QSIW` = FixtureReference target, `AB5g` rating, `gaVE` substitution text.
+- FixtureReference (target type 50): `etdf` date, `Tmhf` home team, `Twaf` away team, `shxf`/`saxf` home/away
+  goals (text; empty before the match), `srxf` "4 - 0", `poNF` competition, `kT1 ` home ratings and `zKyn`
+  away ratings (`rylp` person, `  52` rating), `jTAa` our team's ratings, `6dsa` goals (`rylp` scorer, `I2f0`
+  assister, `t2lQ` minute), `LmjO.yanz` player of the match (`XcoC` rating), `ilf2` scorers text, `nzXO`
+  match news items. FM text carries zero-width spaces (U+200B).
+- Manager `SWEN`: inbox, a list of NewsItemReference targets (type 70; pair `dinu` = news id). Props: `ltit`
+  title, `ydob` body (links = people/clubs), `AMqC` date, `spin` sender.

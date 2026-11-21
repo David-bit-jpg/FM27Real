@@ -34,6 +34,7 @@ from .bridge import DATA_DIR, GRAPHICS, Bridge, BridgeUnavailable, _text
 from .career import CareerTracker
 from .model import PRESETS, ModelError, detect_provider, provider_from_settings
 from .native import NativeSync
+from .story import StoryEngine
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
@@ -100,6 +101,7 @@ class Engine:
         self.settings = load_settings()
         self.token = secrets.token_hex(16)
         self.native = NativeSync(self.bridge)
+        self.story = StoryEngine(self.bridge)
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
@@ -174,6 +176,8 @@ def make_handler(engine: Engine):
                     return self._test(merge_settings(engine.settings, self._body()))
                 if method == "GET" and path == "/api/contacts":
                     return self._contacts()
+                if method == "GET" and path == "/api/feed":
+                    return self._feed(bool(query.get("all")))
                 m = re.fullmatch(r"/api/person/([0-9a-f]{8})", path)
                 if method == "GET" and m:
                     career = engine.careers.current()
@@ -220,6 +224,26 @@ def make_handler(engine: Engine):
                          "uid": cached.get("uid")}
                 recent.append(p | {"last": last})
             self._json(200, {"recent": recent, "squad": squad})
+
+        def _feed(self, everything: bool) -> None:
+            """Recent club results and news, newest first (routine inbox items only with ?all=1)."""
+            career = engine.careers.current()
+            items = []
+            for e in career.store.events("match", limit=40) + career.store.events("news", limit=200):
+                p = e["payload"] or {}
+                if e["kind"] == "news" and p.get("weight", 1) < 1 and not everything:
+                    continue
+                item = {"kind": e["kind"], "date": e["game_date"], "weight": p.get("weight", 1)}
+                if e["kind"] == "match":
+                    item |= {k: p.get(k) for k in ("home_name", "away_name", "score", "competition", "result",
+                                                   "goals", "player_of_match", "player_of_match_name")}
+                else:
+                    names = p.get("names") or {}
+                    people = [{"id": r, "name": names.get(r) or r} for r in (p.get("people") or [])[:6]]
+                    item |= {"title": p.get("title"), "body": p.get("body"), "people": people}
+                items.append(item)
+            items.sort(key=lambda i: (i["date"] or "", i["kind"] == "match"), reverse=True)
+            self._json(200, {"items": items[:120]})
 
         def _send_message(self, person_id: str) -> None:
             text = str(self._body().get("text") or "").strip()
@@ -279,6 +303,7 @@ def background(engine: Engine, interval: float = 3.0) -> None:
         try:
             career = engine.careers.current()
             engine.native.poll(career)
+            engine.story.poll(career)
         except BridgeUnavailable:
             pass
         except Exception as e:  # never let the loop die
