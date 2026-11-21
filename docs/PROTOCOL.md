@@ -103,3 +103,17 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
   match news items. FM text carries zero-width spaces (U+200B).
 - Manager `SWEN`: inbox, a list of NewsItemReference targets (type 70; pair `dinu` = news id). Props: `ltit`
   title, `ydob` body (links = people/clubs), `AMqC` date, `spin` sender.
+
+## Press conference (recorded 2026-11-21, rec-press-conference.jsonl)
+
+- Same SpeakTo system as player conversations. `itca.N2w4` = tone groups (`DwoR.lWh9` 积极/中立/消极,
+  `izOE` 1/2/4), `T3E4` = answers (`lWh9` text, `p3fs` id, `neve` = event id 943147586).
+- `itca.nzfT` = the journalist asking: `h1J ` person, `xj09[].nrtS` question (FM text with links),
+  `gmyy.Xr0u` journalist body language. `itca.j1J` = journalists with questions.
+- `1VLL` extra actions: 无可奉告 (event 2001817170), 暴怒离场 (event 827217993).
+- Start: event 863384693; answer: event 943147586 to the SpeakTo target, data record
+  {`h1J ` journalist ref, `Vpcz` -1, `p3fs` option id, `pQuB` 2}. Leaving early auto-answers the remaining
+  questions (a burst of answer events, p3fs 5). Leave: event 31.
+- Live session: PressConferenceEditSessionReference (target type 81, last_target): `gM8V` journalists present
+  (InteractionPersonAndBodyLanguage: `srep` person, `s1P2` body language), `85GP` current journalist,
+  `U0DX` manager body language. Journalist outlet: person `SdeM` (MediaSourceReference, `eman`).

@@ -302,7 +302,6 @@ def background(engine: Engine, interval: float = 3.0) -> None:
     while True:
         try:
             career = engine.careers.current()
-            engine.native.poll(career)
             engine.story.poll(career)
         except BridgeUnavailable:
             pass
@@ -311,9 +310,24 @@ def background(engine: Engine, interval: float = 3.0) -> None:
         time.sleep(interval)
 
 
+def native_loop(engine: Engine, interval: float = 0.5) -> None:
+    """FM's own dialogs (conversations, press conferences): read often enough to catch
+    every question before it is answered. Cheap while no dialog is in use."""
+    import time
+    while True:
+        try:
+            engine.native.poll(engine.careers.current())
+        except BridgeUnavailable:
+            time.sleep(2)
+        except Exception as e:  # never let the loop die
+            print(f"native: {type(e).__name__}: {e}", file=sys.stderr)
+        time.sleep(interval)
+
+
 def serve() -> None:
     engine = Engine()
     threading.Thread(target=background, args=(engine,), daemon=True, name="background").start()
+    threading.Thread(target=native_loop, args=(engine,), daemon=True, name="native").start()
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(engine))  # never reachable from the network
     path = write_api_file(engine)
     print(f"FM27Real engine on http://127.0.0.1:{PORT} (token in {path})", file=sys.stderr)
