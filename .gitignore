@@ -1,0 +1,9 @@
+.DS_Store
+build/
+*.dylib
+*.o
+.build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.env
