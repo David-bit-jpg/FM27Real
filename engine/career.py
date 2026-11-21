@@ -12,7 +12,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from .bridge import DATA_DIR, Bridge, _text
+from .bridge import DATA_DIR, Bridge, BridgeUnavailable, _text
 from .store import Store
 
 
@@ -71,7 +71,11 @@ class CareerTracker:
         manager = self.bridge.query(game["manager"], ["eman", "dinu"])
         uid = manager.get("dinu") if isinstance(manager.get("dinu"), int) else None
         start = game.get("start") or ""
-        key = f"{uid or game['manager']}-{hashlib.sha1(start.encode()).hexdigest()[:8]}"
+        if not uid or not start or not game.get("manager"):
+            # Right after a save loads these can be missing; never fall back to another
+            # id (that would split the career across databases). Try again shortly.
+            raise BridgeUnavailable("career still loading")
+        key = f"{uid}-{hashlib.sha1(start.encode()).hexdigest()[:8]}"
         store = self._stores.get(key) or Store(DATA_DIR / "careers" / f"{key}.sqlite")
         self._stores[key] = store
         career = Career(

@@ -19,9 +19,11 @@ MAX_REPLY_CHARS = 600
 REPLY_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["reply", "mood", "relation_delta", "memory", "new_canon", "end"],
+    "required": ["reply", "body_language", "mood", "relation_delta", "memory", "new_canon", "end"],
     "properties": {
-        "reply": {"type": "string", "description": "the message the character sends back"},
+        "reply": {"type": "string", "description": "what the character says back"},
+        "body_language": {"type": "string",
+                          "description": "the visible non-verbal reaction while answering, a short phrase"},
         "mood": {"type": "string", "enum": ["happy", "neutral", "worried", "annoyed", "angry", "sad", "excited"]},
         "relation_delta": {
             "type": "object",
@@ -105,7 +107,8 @@ def build_system(snap: dict, career: Career, canon: list[dict], memories: list[d
     out_lang = LANGUAGE_NAMES.get(language, "Simplified Chinese")
 
     return f"""You are {snap.get('name')}, a real person in the world of Football Manager 27. You are texting \
-privately with {career.manager_name}, the manager of {career.team_name}. Today is {career.date} in the game.
+privately with {career.manager_name}, the manager of {career.team_name}, face to face at the club. Today is \
+{career.date} in the game.
 
 Stay fully in character. You are not an AI and you never mention games, prompts or models.
 
@@ -125,7 +128,10 @@ WHAT YOU REMEMBER (conversations, matches, training, things you heard; strongest
 {memory_lines}
 
 HOW TO WRITE:
-- Write every message in {out_lang}, as a real text message: short and natural, usually one to three sentences.
+- Write what you say in {out_lang}: spoken, short and natural, usually one to three sentences.
+- body_language: what the manager can see while you answer, as a short phrase in {out_lang} without a subject \
+(for example a small smile, avoiding eye contact, arms folded, leaning forward). It must match how you really \
+feel, including when your words are more polite than your feelings. Use an empty string if nothing stands out.
 - Your English level is "{english}". The club speaks English with you; if your English is basic, write like \
 someone with limited English: short, simple sentences, sometimes searching for words. Still write in {out_lang}.
 - Your personality ("{snap.get('personality') or 'unknown'}") and how you handle the media \
@@ -178,6 +184,7 @@ def validate(result: dict) -> dict:
             canon.append({"key": key, "value": value})
     return {
         "reply": reply[:MAX_REPLY_CHARS],
+        "body_language": str(result.get("body_language") or "").strip()[:60],
         "mood": result.get("mood") if result.get("mood") in REPLY_SCHEMA["properties"]["mood"]["enum"] else "neutral",
         "relation_delta": clean_delta,
         "memory": str(result.get("memory") or "").strip()[:300],
@@ -199,7 +206,7 @@ def converse(model: Provider, career: Career, snap: dict, text: str, language: s
     prompt = build_prompt(history, career.manager_name, snap.get("name", ""), text)
     # Ask first: if the model fails, nothing is stored and the manager can resend.
     result = validate(model.complete(system, prompt, REPLY_SCHEMA))
-    meta = {k: result[k] for k in ("mood", "relation_delta", "memory", "new_canon", "end")}
+    meta = {k: result[k] for k in ("body_language", "mood", "relation_delta", "memory", "new_canon", "end")}
     store.add_message(person_id, "manager", text, career.date)
     message_id = store.add_message(person_id, "person", result["reply"], career.date, meta)
     if result["memory"]:

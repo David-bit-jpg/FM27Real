@@ -46,10 +46,8 @@
   .chat-head { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .chat-head .name { font-size: 16px; font-weight: 650; }
   .chat-head .sub { color: var(--muted); font-size: 12px; }
-  .rel { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 8px; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
-  .bar { position: relative; height: 5px; background: #0d1426; border-radius: 3px; min-width: 90px; }
-  .bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
-  .bar::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: #ffffff33; }
+  .mood { display: inline-block; margin-top: 6px; padding: 2px 9px; border-radius: 10px; background: #ffffff12; color: var(--muted); font-size: 12px; }
+  .gesture { color: var(--muted); font-size: 12px; font-style: italic; margin: 4px 2px -2px; max-width: 82%; }
   .log { flex: 1; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
   .msg { max-width: 82%; padding: 8px 12px; border-radius: 14px; background: var(--theirs); white-space: pre-wrap; word-break: break-word; }
   .msg.me { align-self: flex-end; background: var(--mine); border-bottom-right-radius: 4px; }
@@ -96,7 +94,8 @@ const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
   zh: { phone: "主教练手机", messages: "消息", settings: "设置", recent: "最近聊天", squad: "一线队",
         noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
-        typing: "正在输入…", failed: "没发出去", retry: "重发", trust: "信任", liking: "好感", respect: "尊重",
+        typing: "正在输入…", failed: "没发出去", retry: "重发", typingSpoken: "正在想怎么回答…",
+        moods: { happy: "心情不错", neutral: "神色平静", worried: "有些担心", annoyed: "有点不耐烦", angry: "明显不高兴", sad: "有些失落", excited: "很兴奋" },
         language: "界面语言", model: "模型", provider: "提供方", apiKey: "API key", keySaved: "已保存", keyKeep: "留空则保留已保存的 key",
         keyNone: "这个选项不需要 key；粘贴别家的 key 会自动切换", pickProvider: "请在上面选这个 key 属于哪家", baseUrl: "接口地址", modelName: "模型名称", fetchModels: "获取模型列表",
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
@@ -104,7 +103,8 @@ const T = {
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
   en: { phone: "Manager's phone", messages: "Messages", settings: "Settings", recent: "Recent", squad: "First team",
         noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
-        typing: "typing…", failed: "Not sent", retry: "Retry", trust: "Trust", liking: "Liking", respect: "Respect",
+        typing: "typing…", failed: "Not sent", retry: "Retry", typingSpoken: "is thinking…",
+        moods: { happy: "In good spirits", neutral: "Calm", worried: "A little worried", annoyed: "A bit impatient", angry: "Clearly unhappy", sad: "Downcast", excited: "Excited" },
         language: "Language", model: "Model", provider: "Provider", apiKey: "API key", keySaved: "Saved", keyKeep: "Leave empty to keep the saved key",
         keyNone: "No key needed (paste a key to switch)", pickProvider: "Choose which provider this key belongs to above", baseUrl: "API address", modelName: "Model", fetchModels: "List models",
         test: "Test connection", save: "Save", saved: "Saved", testing: "Testing…", testOk: "Connected", detected: "Recognised as",
@@ -179,15 +179,9 @@ async function showHome() {
 }
 
 // --- chat ----------------------------------------------------------------------
-function relBars(rel) {
-  const box = el("div", { class: "rel" });
-  for (const k of ["trust", "liking", "respect"]) {
-    const v = rel[k] || 0, w = Math.min(Math.abs(v), 20) * 2.5;
-    const bar = el("i", {}); bar.style.background = v >= 0 ? "var(--good)" : "var(--bad)";
-    bar.style.left = v >= 0 ? "50%" : (50 - w) + "%"; bar.style.width = w + "%";
-    box.append(el("span", {}, t(k)), el("div", { class: "bar" }, bar), el("span", {}, (v > 0 ? "+" : "") + v));
-  }
-  return box;
+function moodChip(mood) {
+  const words = (T[lang] || T.zh).moods;
+  return el("div", { class: "mood" }, words[mood] || words.neutral);
 }
 
 async function openPerson(id) {
@@ -202,25 +196,31 @@ async function openPerson(id) {
   const head = el("div", { class: "chat-head" }, avatar(person, true),
     el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name" }, person.name),
       el("div", { class: "sub" }, [person.position, person.team_name, person.age && `${person.age}`].filter(Boolean).join(" · ")),
-      relBars(person.relation || {})));
+      moodChip(lastMood(messages))));
   const input = el("input", { placeholder: t("placeholder"), autocomplete: "off" });
   const sendBtn = el("button", { type: "submit" }, t("send"));
   const form = el("form", { class: "send" }, input, sendBtn);
   let lastDay = null;
+  function lastMood(list) {
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].sender === "person" && list[i].meta) return list[i].meta.mood;
+    return "neutral";
+  }
   const addMsg = m => {
     if (m.game_date && m.game_date !== lastDay) { log.append(el("div", { class: "day" }, m.game_date)); lastDay = m.game_date; }
+    if (m.sender === "person" && m.meta && m.meta.body_language) log.append(el("div", { class: "gesture" }, m.meta.body_language));
     log.append(el("div", { class: "msg " + (m.sender === "manager" ? "me" : "them") }, m.text));
   };
   messages.forEach(addMsg);
   const send = async text => {
     const mine = el("div", { class: "msg me" }, text); log.append(mine);
-    const typing = el("div", { class: "typing" }, `${person.name} ${t("typing")}`); log.append(typing);
+    const typing = el("div", { class: "typing" }, `${person.name} ${t("typingSpoken")}`); log.append(typing);
     log.scrollTop = log.scrollHeight; input.disabled = sendBtn.disabled = true;
     try {
       const r = await api(`/api/messages/${id}`, { text });
       typing.remove(); if (current !== id) return;
+      if (r.body_language) log.append(el("div", { class: "gesture" }, r.body_language));
       log.append(el("div", { class: "msg them" }, r.reply));
-      const fresh = await api(`/api/person/${id}`); head.querySelector(".rel").replaceWith(relBars(fresh.relation || {}));
+      head.querySelector(".mood").replaceWith(moodChip(r.mood));
     } catch (e) {
       typing.remove(); mine.remove();
       log.append(el("div", { class: "failed" }, `${t("failed")}: ${e.code === "model" ? t("modelErr") : ""}${e.message}`,
