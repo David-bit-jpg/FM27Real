@@ -73,7 +73,6 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
 | ` Vj5` | 球队 | 职员名单（主教练在前） | 48 人 |
 
 `tools/fm27.py` 里的 `PERSON_FIELDS` 有完整的已对照字段。
-| `Guid` | 目标 | 存档会话 | |
 
 ## 日期
 
