@@ -4,6 +4,7 @@
     python3 -m engine career          show the loaded career
     python3 -m engine person <id>     show a person snapshot (cached per game day)
     python3 -m engine chat <id>       text that person in the terminal (Ctrl+D to stop)
+    python3 -m engine check           check that the model backend works (Claude login)
 """
 import json
 import sys
@@ -15,10 +16,31 @@ from .model import ModelError, provider_from_settings
 from .server import load_settings, serve
 
 
+def check() -> int:
+    """Verifies the model backend with one tiny request."""
+    settings = load_settings()
+    provider = provider_from_settings(settings)
+    print(f"backend: {provider.name}" + (f" ({getattr(provider, 'path', '')})" if getattr(provider, "path", None) else ""))
+    schema = {"type": "object", "required": ["ok"], "properties": {"ok": {"type": "boolean"}},
+              "additionalProperties": False}
+    try:
+        provider.complete("Reply with ok = true.", "ok?", schema)
+    except ModelError as e:
+        print(f"not working: {e}")
+        if "log" in str(e).lower():
+            print("Log in once: run the Claude command line in a terminal, choose your Claude account, then /exit:")
+            print(f'  "{getattr(provider, "path", "claude")}"')
+        return 1
+    print("ok: the model answers")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 1:
         serve()
         return 0
+    if argv[1] == "check":
+        return check()
     try:
         bridge = Bridge()
         career = CareerTracker(bridge).current()
@@ -50,7 +72,7 @@ def chat(bridge, career, person_id: str) -> int:
     while True:
         try:
             text = input(f"{career.manager_name}> ").strip()
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
             print()
             return 0
         if not text:
@@ -58,7 +80,10 @@ def chat(bridge, career, person_id: str) -> int:
         try:
             r = dialogue.converse(model, career, snap, text, settings["language"])
         except ModelError as e:
-            print(f"  (model error: {e})")
+            print(f"  (model error: {e}; nothing was saved, you can resend)")
+            continue
+        except KeyboardInterrupt:
+            print("\n  (cancelled; nothing was saved)")
             continue
         d = r["relation_delta"]
         print(f"{snap.get('name')}: {r['reply']}")
