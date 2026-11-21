@@ -23,7 +23,7 @@
 typedef uint64_t u64;
 typedef void (*Fn8)(u64, u64, u64, u64, u64, u64, u64, u64);
 
-static Fn8 g_orig_response, g_orig_event, g_orig_open, g_orig_tick, g_orig_actions;
+static Fn8 g_orig_response, g_orig_event, g_orig_open, g_orig_tick, g_orig_actions, g_orig_update, g_orig_send;
 static FILE *g_tap;
 static size_t g_tap_bytes;
 static const size_t kTapLimit = 64u << 20;  // stop logging after 64 MB
@@ -766,7 +766,74 @@ static void hook_actions(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h)
         memcpy(&mode, acts + 24 * i + 16, 4);
         if (mode == g_mode_close && !is_ours(key)) open_add(key_record(key), -1);
     }
+    if (g_tap && !t_busy && n) {  // record the UI's own actions (for learning its protocols)
+        t_busy = 1;
+        int logged = 0;
+        for (int i = 0; i < n && logged < 200; i++) {
+            int32_t mode;
+            u64 key, extra;
+            memcpy(&key, acts + 24 * i, 8);
+            memcpy(&extra, acts + 24 * i + 8, 8);
+            memcpy(&mode, acts + 24 * i + 16, 4);
+            if (is_ours(key) || mode == g_mode_close) continue;
+            char cc[16];
+            fourcc_string(key_get(key), cc);
+            if (!logged++) tap_printf("A actions=%d\n", n);
+            tap_printf("  %016llx %s mode=%d extra=%016llx\n", key, cc, mode, extra);
+        }
+        if (logged) fflush(g_tap);
+        t_busy = 0;
+    }
     g_orig_actions(a, b, c, d, e, f, g, h);
+}
+
+// IGamePlugin.UpdateChannelData(ChannelAction action, Span<byte> data): the UI
+// writing a value (e.g. choosing an option). ChannelAction (24 bytes) arrives
+// by pointer in x1; the span in x2/x3.
+static void hook_update(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
+    if (g_tap && !t_busy) {
+        t_busy = 1;
+        uint8_t act[24];
+        u64 key = 0, extra = 0;
+        int32_t mode = -1;
+        if (safe_read((const void *)b, act, sizeof act)) {
+            memcpy(&key, act, 8);
+            memcpy(&extra, act + 8, 8);
+            memcpy(&mode, act + 16, 4);
+        }
+        u64 x[8] = {a, b, c, d, e, f, g, h};
+        const void *dp;
+        int dn;
+        span_arg(x, 2, &dp, &dn);
+        uint8_t raw[160];
+        char rh[330], cc[16];
+        hex(raw, span_copy(dp, dn, 1, raw, sizeof raw), rh, sizeof rh);
+        fourcc_string(key_get(key), cc);
+        tap_printf("U key=%016llx %s mode=%d extra=%016llx bytes=%d raw=%s\n", key, cc, mode, extra, dn, rh);
+        fflush(g_tap);
+        t_busy = 0;
+    }
+    g_orig_update(a, b, c, d, e, f, g, h);
+}
+
+// IGamePlugin.SendEvent(uint id, Span<byte> target, Span<byte> data): UI -> engine events.
+static void hook_send(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
+    if (g_tap && !t_busy) {
+        t_busy = 1;
+        u64 x[8] = {a, b, c, d, e, f, g, h};
+        const void *tp, *dp;
+        int tn, dn;
+        span_arg(x, 2, &tp, &tn);
+        span_arg(x, 4, &dp, &dn);
+        uint8_t t[96], raw[160];
+        char th[200], rh[330];
+        hex(t, span_copy(tp, tn, 1, t, sizeof t), th, sizeof th);
+        hex(raw, span_copy(dp, dn, 1, raw, sizeof raw), rh, sizeof rh);
+        tap_printf("S id=%u target(%d)=%s data(%d)=%s\n", (uint32_t)b, tn, th, dn, rh);
+        fflush(g_tap);
+        t_busy = 0;
+    }
+    g_orig_send(a, b, c, d, e, f, g, h);
 }
 
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
@@ -864,6 +931,8 @@ void tap_install(void) {
     const MethodInfo *open = method(wrapper, "OpenChannels", 2);
     const MethodInfo *tick = method(wrapper, "Tick", 0);
     const MethodInfo *actions = method(wrapper, "PerformChannelActions", 1);
+    const MethodInfo *update = method(wrapper, "UpdateChannelData", 2);
+    const MethodInfo *send = method(wrapper, "SendEvent", 3);
     g_typed_value_as_string = method(typed_value, "AsString", 0);
     g_typed_value_get = method_returning(typed_value, "Get", "System.Object");
     g_open_method = open;
@@ -892,6 +961,8 @@ void tap_install(void) {
     n += patch_vtable(wrapper, open, (void *)hook_open, &g_orig_open);
     n += patch_vtable(wrapper, actions, (void *)hook_actions, &g_orig_actions);
     n += patch_vtable(wrapper, tick, (void *)hook_tick, &g_orig_tick);
+    if (update) n += patch_vtable(wrapper, update, (void *)hook_update, &g_orig_update);
+    if (send) n += patch_vtable(wrapper, send, (void *)hook_send, &g_orig_send);
     log_line("tap: installed (%d vtable slots)", n);
 }
 
