@@ -86,7 +86,21 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._db.executescript(SCHEMA)
+            self._migrate()
             self._db.commit()
+
+    def _migrate(self) -> None:
+        """Columns added after the first schema (older databases get them here)."""
+        cols = {r[1] for r in self._db.execute("PRAGMA table_info(memories)")}
+        for name, decl in (("weight", "REAL NOT NULL DEFAULT 1"), ("kind", "TEXT"), ("event_key", "TEXT")):
+            if name not in cols:
+                self._db.execute(f"ALTER TABLE memories ADD COLUMN {name} {decl}")
+        self._db.execute("CREATE UNIQUE INDEX IF NOT EXISTS memories_event ON memories (person_id, event_key) "
+                         "WHERE event_key IS NOT NULL")
+        ecols = {r[1] for r in self._db.execute("PRAGMA table_info(events)")}
+        if "event_key" not in ecols:
+            self._db.execute("ALTER TABLE events ADD COLUMN event_key TEXT")
+        self._db.execute("CREATE UNIQUE INDEX IF NOT EXISTS events_key ON events (event_key) WHERE event_key IS NOT NULL")
 
     def _exec(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -142,17 +156,76 @@ class Store:
             "(SELECT MAX(id) FROM messages GROUP BY person_id) ORDER BY id DESC LIMIT ?", (limit,))
         return [(r["person_id"], r["text"]) for r in rows]
 
-    # --- canon and memories -------------------------------------------------------
+    # --- canon --------------------------------------------------------------------
     def canon(self, person_id: str) -> list[dict]:
         return [dict(r) for r in self._exec(
             "SELECT key, value, game_date FROM canon WHERE person_id = ? ORDER BY id", (person_id,))]
 
-    def memories(self, person_id: str, limit: int = 30) -> list[dict]:
-        rows = self._exec("SELECT game_date, text, source FROM memories WHERE person_id = ? "
+    def add_canon(self, person_id: str, key: str, value: str, game_date: str | None, source: str) -> bool:
+        """Adds a life detail; an existing key is never overwritten (canon stays canon)."""
+        with self._lock:
+            cur = self._db.execute(
+                "INSERT OR IGNORE INTO canon (person_id, key, value, game_date, source) VALUES (?, ?, ?, ?, ?)",
+                (person_id, key, value, game_date, source))
+            self._db.commit()
+            return cur.rowcount > 0
+
+    # --- memories -----------------------------------------------------------------
+    def add_memory(self, person_id: str, text: str, game_date: str | None, source: str, weight: float = 1.0,
+                   kind: str | None = None, event_key: str | None = None) -> bool:
+        """Stores a memory; with an event_key, the same event is stored only once per person."""
+        with self._lock:
+            cur = self._db.execute(
+                "INSERT OR IGNORE INTO memories (person_id, game_date, text, source, weight, kind, event_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)", (person_id, game_date, text, source, weight, kind, event_key))
+            self._db.commit()
+            return cur.rowcount > 0
+
+    def memories(self, person_id: str, limit: int = 300) -> list[dict]:
+        rows = self._exec("SELECT game_date, text, source, weight, kind FROM memories WHERE person_id = ? "
                           "ORDER BY id DESC LIMIT ?", (person_id, limit))
         return [dict(r) for r in reversed(rows)]
 
+    # --- relations ----------------------------------------------------------------
+    RELATION_LIMIT = 100  # each score stays within -100..100
+
+    def relation(self, person_id: str) -> dict:
+        rows = self._exec("SELECT trust, liking, respect, updated_date FROM relations WHERE person_id = ?",
+                          (person_id,))
+        if not rows:
+            return {"trust": 0, "liking": 0, "respect": 0, "updated_date": None}
+        r = dict(rows[0])
+        return {k: int(round(r[k] or 0)) for k in ("trust", "liking", "respect")} | {"updated_date": r["updated_date"]}
+
+    def apply_relation(self, person_id: str, delta: dict, game_date: str | None) -> dict:
+        r = self.relation(person_id)
+        lim = self.RELATION_LIMIT
+        for k in ("trust", "liking", "respect"):
+            r[k] = max(-lim, min(lim, (r[k] or 0) + int(delta.get(k) or 0)))
+        self._exec(
+            "INSERT INTO relations (person_id, trust, liking, respect, updated_date) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (person_id) DO UPDATE SET trust = excluded.trust, liking = excluded.liking, "
+            "respect = excluded.respect, updated_date = excluded.updated_date",
+            (person_id, r["trust"], r["liking"], r["respect"], game_date))
+        r["updated_date"] = game_date
+        return r
+
     # --- events -----------------------------------------------------------------
-    def add_event(self, kind: str, game_date: str | None, payload: dict) -> None:
-        self._exec("INSERT INTO events (game_date, kind, payload) VALUES (?, ?, ?)",
-                   (game_date, kind, json.dumps(payload, ensure_ascii=False)))
+    def add_event(self, kind: str, game_date: str | None, payload: dict, event_key: str | None = None) -> bool:
+        """Records a world event; with an event_key it is recorded only once."""
+        with self._lock:
+            cur = self._db.execute("INSERT OR IGNORE INTO events (game_date, kind, payload, event_key) VALUES (?, ?, ?, ?)",
+                                   (game_date, kind, json.dumps(payload, ensure_ascii=False), event_key))
+            self._db.commit()
+            return cur.rowcount > 0
+
+    def events(self, kind: str | None = None, since: str | None = None, limit: int = 200) -> list[dict]:
+        sql, args = "SELECT game_date, kind, payload, event_key FROM events WHERE 1=1", []
+        if kind:
+            sql += " AND kind = ?"
+            args.append(kind)
+        if since:
+            sql += " AND game_date >= ?"
+            args.append(since)
+        rows = self._exec(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))
+        return [dict(r) | {"payload": json.loads(r["payload"]) if r["payload"] else None} for r in reversed(rows)]

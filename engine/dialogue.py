@@ -8,6 +8,7 @@ engine; the model may add small life details, which become canon.
 """
 from __future__ import annotations
 
+from . import memory as mem
 from .career import Career
 from .model import ModelError, Provider
 
@@ -62,7 +63,8 @@ def _english_level(languages: str) -> str:
     return "none"
 
 
-def build_system(snap: dict, career: Career, canon: list[dict], memories: list[dict], language: str) -> str:
+def build_system(snap: dict, career: Career, canon: list[dict], memories: list[dict], relation: dict,
+                 language: str) -> str:
     social = snap.get("social") or {}
     origin = snap.get("origin") or {}
     friends = [f"{f['name']} ({f['relation']})" for f in social.get("favoured") or []]
@@ -84,9 +86,12 @@ def build_system(snap: dict, career: Career, canon: list[dict], memories: list[d
         f"Playing time: {snap.get('playing_time_feeling')}" if snap.get("playing_time_feeling") else None,
         f"Trained at: {snap.get('trained_at')}" if snap.get("trained_at") else None,
     ])
+    feelings = ", ".join(f"{k} {relation.get(k, 0):+d} ({mem.relation_words(relation.get(k, 0))})"
+                         for k in ("trust", "liking", "respect"))
     situation = _lines([
         f"Close to: {', '.join(friends)}" if friends else "No particularly close people at the club",
-        f"View of the manager: {social.get('view_of_manager')}" if social.get("view_of_manager") else None,
+        f"View of the manager (FM): {social.get('view_of_manager')}" if social.get("view_of_manager") else None,
+        f"Your own feelings toward the manager from your dealings so far (scale -100..100): {feelings}",
         *[f"Feeling: {h}" for h in social.get("happiness") or []],
     ])
     background = _lines([
@@ -116,7 +121,7 @@ BACKGROUND:
 LIFE DETAILS YOU HAVE ALREADY MENTIONED (canon; stay consistent):
 {canon_lines}
 
-WHAT YOU REMEMBER FROM EARLIER CONVERSATIONS WITH THE MANAGER:
+WHAT YOU REMEMBER (conversations, matches, training, things you heard; strongest first in your mind):
 {memory_lines}
 
 HOW TO WRITE:
@@ -129,6 +134,8 @@ someone with limited English: short, simple sentences, sometimes searching for w
 people's words). If the manager asks about something you do not know, say so or react naturally; do not invent it.
 - You may share small everyday life details (family moments, hobbies, the city, training anecdotes) that fit the \
 facts. If you introduce a new lasting detail (a pet's name, a hobby, a habit), add it to new_canon.
+- Let your feelings and memories shape your tone: warmer when they are positive, guarded or cold when wary or \
+hostile; bring up things you remember when they are relevant, without reciting them.
 - relation_delta: how the manager's latest message changed your trust, liking and respect for them, each from \
 -{MAX_DELTA} to {MAX_DELTA}; usually 0 or ±1, larger only for something significant.
 - memory: one sentence in third person about anything worth remembering from this exchange (a promise, a \
@@ -180,17 +187,25 @@ def validate(result: dict) -> dict:
 
 
 def converse(model: Provider, career: Career, snap: dict, text: str, language: str) -> dict:
-    """Stores the manager's message, asks the model, stores and returns the checked reply."""
+    """Stores the manager's message, asks the model, stores and returns the checked reply.
+    The reply's memory, relationship change and new life details are kept."""
     store = career.store
     person_id = snap["id"]
     history = store.messages(person_id, limit=HISTORY_TURNS)
     canon = store.canon(person_id)
-    memories = store.memories(person_id)
-    system = build_system(snap, career, canon, memories, language)
+    memories = mem.recall(store.memories(person_id), career.date)
+    relation = store.relation(person_id)
+    system = build_system(snap, career, canon, memories, relation, language)
     prompt = build_prompt(history, career.manager_name, snap.get("name", ""), text)
     # Ask first: if the model fails, nothing is stored and the manager can resend.
     result = validate(model.complete(system, prompt, REPLY_SCHEMA))
     meta = {k: result[k] for k in ("mood", "relation_delta", "memory", "new_canon", "end")}
     store.add_message(person_id, "manager", text, career.date)
     message_id = store.add_message(person_id, "person", result["reply"], career.date, meta)
-    return {"id": message_id, **result}
+    if result["memory"]:
+        strong = max(abs(v) for v in result["relation_delta"].values()) >= 2 or result["mood"] in ("angry", "excited", "sad")
+        store.add_memory(person_id, result["memory"], career.date, "conversation", 2.0 if strong else 1.0, "conversation")
+    new_relation = store.apply_relation(person_id, result["relation_delta"], career.date)
+    for c in result["new_canon"]:
+        store.add_canon(person_id, c["key"], c["value"], career.date, "conversation")
+    return {"id": message_id, **result, "relation": new_relation}

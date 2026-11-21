@@ -117,16 +117,6 @@ class Engine:
             return out
 
 
-def relation_summary(messages: list[dict]) -> dict:
-    """Running total of relationship changes in a conversation (until 2f keeps scores)."""
-    total = {"trust": 0, "liking": 0, "respect": 0}
-    for m in messages:
-        delta = (m.get("meta") or {}).get("relation_delta") or {}
-        for k in total:
-            total[k] += int(delta.get(k) or 0)
-    return total
-
-
 def make_handler(engine: Engine):
     class Handler(BaseHTTPRequestHandler):
         server_version = "FM27Real"
@@ -187,7 +177,8 @@ def make_handler(engine: Engine):
                     career = engine.careers.current()
                     snap = snapshot.get(engine.bridge, career, m.group(1), refresh=bool(query.get("refresh")))
                     msgs = career.store.messages(m.group(1))
-                    return self._json(200, snap | {"relation": relation_summary(msgs), "message_count": len(msgs)})
+                    rel = career.store.relation(m.group(1))
+                    return self._json(200, snap | {"relation": rel, "message_count": len(msgs)})
                 m = re.fullmatch(r"/api/messages/([0-9a-f]{8})", path)
                 if method == "GET" and m:
                     return self._json(200, engine.careers.current().store.messages(m.group(1)))
