@@ -48,6 +48,7 @@ class NativeSync:
         self.options: dict[int, dict] = {}   # p3fs -> {"text", "topic"}
         self.topic: str | None = None
         self.pending: list[dict] = []
+        self.audits: list[tuple[float, str, list]] = []  # recent (time, action, people): FM may log before or after
 
     # --- polling -----------------------------------------------------------------
     def poll(self, career: Career) -> None:
@@ -99,13 +100,16 @@ class NativeSync:
             if option and option["topic"] is None:  # a topic was chosen; the sentence comes next
                 self.topic = option["text"]
                 return
+            now = time.monotonic()
+            earlier = next((a for t, a, people in reversed(self.audits) if now - t < 10 and person in people), None)
             self.pending.append({"person": person, "line": option["text"] if option else None,
-                                 "topic": (option or {}).get("topic") or self.topic, "action": None,
-                                 "at": time.monotonic(), "option_id": data.get("p3fs")})
+                                 "topic": (option or {}).get("topic") or self.topic, "action": earlier,
+                                 "at": 0 if earlier else now, "option_id": data.get("p3fs")})
             return
         action = data.get("eman")
         targets = [t.get("ref") for t in data.get("TSDv") or [] if isinstance(t, dict)]
         if isinstance(action, str) and targets:
+            self.audits = [a for a in self.audits if time.monotonic() - a[0] < 30] + [(time.monotonic(), action, targets)]
             for p in self.pending:
                 if p["person"] in targets and not p["action"]:
                     p["action"] = action
