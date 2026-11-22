@@ -16,6 +16,8 @@ identifies a save exactly (FM's in-game save counter only refreshes on load).
 - The save file is rewritten: a checkpoint is written, keyed by the file time.
 - "Save as" (another save file is written instead): that save continues
   from the current memory.
+- The engine restarts while the same game keeps running (FM's session id is
+  the one stored in memory): memory simply continues.
 - A save is loaded (FM's session id changes): the checkpoint with the same
   file time is restored; without one, the newest checkpoint not later than
   the game date; without that, memory starts empty. The memory being
@@ -206,6 +208,20 @@ class CareerTracker:
     def _on_load(self, c: Career, save: str, count: int | None, date: str, session: str) -> None:
         """A save was loaded: bring memory to the state that matches it."""
         target = self._memory_path(c.key, save)
+        if session and target.exists():
+            # The engine restarted while the same game kept running (same FM session):
+            # memory already matches the game; nothing to restore.
+            probe = c.store if c.store.path == target else Store(target)
+            same = probe.get_meta("session") == session
+            if probe is not c.store:
+                probe.close()
+            if same:
+                if c.store.path != target:
+                    c.store.close()
+                    c.store = Store(target)
+                c.save_name, c.save_count, c.date, c.session = save, count, date, session
+                c.save_time = self._save_file_time(save)
+                return
         folder = self._checkpoint_dir(c.key, save)
         file_time = self._save_file_time(save)
         exact = []
@@ -243,3 +259,4 @@ class CareerTracker:
         c.save_name, c.save_count, c.date, c.session = save, count, date, session
         c.save_time = file_time
         c.store.set_meta("last_date", date)
+        c.store.set_meta("session", session)
