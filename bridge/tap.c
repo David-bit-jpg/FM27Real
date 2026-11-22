@@ -1191,11 +1191,20 @@ static const MethodInfo *method_with_params(Il2CppClass *k, const char *name, in
 
 // new T(List<InteropReference.Pair>{pairs}) for an InteropReference subclass T.
 static Il2CppObject *make_reference(Il2CppClass *k, const uint32_t *codes, const int32_t *values, int n) {
-    const MethodInfo *ctor = method_with_params(k, ".ctor", 1);
-    if (!ctor) return NULL;
+    const MethodInfo *ctor = NULL;
+    void *it = NULL;
+    const MethodInfo *m;
+    char tn[256];
+    while (k && (m = il2cpp_class_get_methods(k, &it))) {  // the .ctor(List<InteropReference.Pair>) one
+        if (strcmp(il2cpp_method_get_name(m), ".ctor") || il2cpp_method_get_param_count(m) != 1) continue;
+        il2cpp_type_name(il2cpp_method_get_param(m, 0), tn, sizeof tn);
+        log_line("ige: %s.ctor(%s)", il2cpp_class_get_name(k), tn);
+        if (strstr(tn, "List")) ctor = m;
+    }
+    if (!ctor) { log_line("ige: %s has no .ctor(List<Pair>)", k ? il2cpp_class_get_name(k) : "?"); return NULL; }
     Il2CppClass *list_k = il2cpp_class_from_type(il2cpp_method_get_param(ctor, 0));
     const MethodInfo *list_ctor = method_with_params(list_k, ".ctor", 0), *add = method_with_params(list_k, "Add", 1);
-    if (!list_k || !list_ctor || !add) return NULL;
+    if (!list_k || !list_ctor || !add) { log_line("ige: List methods missing (%p %p %p)", (void *)list_k, (void *)list_ctor, (void *)add); return NULL; }
     Il2CppException *exc = NULL;
     Il2CppObject *list = il2cpp_object_new(list_k);
     il2cpp_runtime_invoke(list_ctor, list, NULL, &exc);
@@ -1206,10 +1215,11 @@ static Il2CppObject *make_reference(Il2CppClass *k, const uint32_t *codes, const
         void *args[1] = {pair};
         il2cpp_runtime_invoke(add, list, args, &exc);
     }
-    if (exc) return NULL;
+    if (exc) { log_line("ige: List build threw"); return NULL; }
     Il2CppObject *obj = il2cpp_object_new(k);
     void *args[1] = {list};
     il2cpp_runtime_invoke(ctor, obj, args, &exc);
+    if (exc) log_line("ige: %s.ctor threw", il2cpp_class_get_name(k));
     return exc ? NULL : obj;
 }
 
