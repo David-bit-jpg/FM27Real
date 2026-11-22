@@ -49,8 +49,8 @@ class Career:
     manager_id: str
     manager_name: str
     manager_uid: int | None
-    team_id: str
-    team_name: str
+    team_id: str | None    # None while the manager has no club
+    team_name: str         # "无俱乐部（待业）" while he has none, so prompts read naturally
     save_name: str
     save_count: int | None
     save_time: float | None  # modification time of the save file the memory matches
@@ -60,13 +60,19 @@ class Career:
     store: Store
     clock: str = ""  # FM's in-game time ("2028-3-7 09:00"); moves only when the game advances
 
+    @property
+    def unemployed(self) -> bool:
+        return not self.team_id
+
     def summary(self) -> dict:
         return {
             "key": self.key, "date": self.date, "save": self.save_name, "save_count": self.save_count,
             "start": self.start,
             "manager": {"id": self.manager_id, "name": self.manager_name, "uid": self.manager_uid},
-            "team": {"id": self.team_id, "name": self.team_name},
+            "team": {"id": self.team_id, "name": self.team_name}, "unemployed": self.unemployed,
         }
+
+NO_CLUB = "无俱乐部（待业）"
 
 
 def _save_name(raw: str) -> str:
@@ -135,6 +141,8 @@ class CareerTracker:
             count = game.get("save_count") if isinstance(game.get("save_count"), int) else None
             c.date = game["date"]
             c.clock = game.get("datetime") or ""
+            if game.get("team") != c.team_id:  # sacked, resigned or hired: the career goes on at the new club
+                self._job_change(c, game.get("team"))
             if session != c.session:
                 self._on_load(c, save, count, game["date"], session)
             else:
@@ -149,9 +157,6 @@ class CareerTracker:
             return c
 
     def _open(self, game: dict, session: str) -> Career:
-        if self._career:
-            self._career.store.close()
-            self._career = None
         manager = self.bridge.query(game["manager"], ["eman", "dinu"])
         uid = manager.get("dinu") if isinstance(manager.get("dinu"), int) else None
         start = game.get("start") or ""
@@ -160,12 +165,15 @@ class CareerTracker:
             # id (that would split the career across databases). Try again shortly.
             raise BridgeUnavailable("career still loading")
         key = f"{uid}-{hashlib.sha1(start.encode()).hexdigest()[:8]}"
+        if self._career:  # only now that the new career is known: work still running on the old one ends cleanly
+            old, self._career = self._career, None
+            threading.Timer(120, old.store.close).start()
         save = _save_name(game.get("save_name", ""))
         count = game.get("save_count") if isinstance(game.get("save_count"), int) else None
         self._adopt_legacy(key, save)
         career = Career(
             key=key, manager_id=game["manager"], manager_name=_text(manager.get("eman")) or "",
-            manager_uid=uid, team_id=game["team"], team_name=self.bridge.name(game["team"]),
+            manager_uid=uid, team_id=game["team"], team_name=self.bridge.name(game["team"]) or NO_CLUB,
             save_name=save, save_count=count, save_time=None, start=start, date=game["date"], session="",
             store=Store(self._memory_path(key, save)),
         )
@@ -175,6 +183,17 @@ class CareerTracker:
                      ("save_name", save), ("start", start)):
             career.store.set_meta(k, v)
         return career
+
+    def _job_change(self, c: Career, team: str | None) -> None:
+        old_id, old_name = c.team_id, c.team_name
+        c.team_id, c.team_name = team, (self.bridge.name(team) if team else "") or NO_CLUB
+        c.store.set_meta("team_name", c.team_name)
+        if old_id:  # remember the last club and its players (they may still get in touch)
+            c.store.set_meta("former_team", old_id)
+            c.store.set_meta("former_team_name", old_name)
+        c.store.add_event("job_change", c.date, {"from": old_id, "from_name": old_name, "to": team,
+                                                "to_name": c.team_name if team else None},
+                          event_key=f"job_change:{c.date}:{team}")
 
     def _adopt_legacy(self, key: str, save: str) -> None:
         """Before memory followed saves, a career had one database: careers/<key>.sqlite."""

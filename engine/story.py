@@ -30,7 +30,7 @@ from .stats import match_row
 
 FORM_FIELDS = ("ZaLo", "E2cn", "phIw")  # a player's last-five-matches form (different competitions)
 FIXTURE_FIELDS = ["etdf", "Tmhf", "Twaf", "shxf", "saxf", "srxf", "poNF", "kT1 ", "zKyn", "6dsa", "LmjO"]
-NEWS_FIELDS = ["ltit", "ydob", "AMqC", "spin", "dinu", "wZa "]
+NEWS_FIELDS = ["ltit", "ydob", "AMqC", "spin", "dinu", "wZa ", "tdP3"]  # tdP3: the article a forwarded item points to
 POST_KINDS = {1: "club", 2: "fan", 3: "media", 4: "pundit", 5: "competition"}
 GOOD_RATING = 8.0
 POOR_RATING = 6.0
@@ -85,6 +85,8 @@ class StoryEngine:
         clock = (career.key, career.clock or career.date)
         if clock == self.clock:
             return
+        if getattr(self, "_names_key", None) != career.key:  # record ids belong to one game database
+            self.names, self._names_key = {}, career.key
         self.clock = clock
         self._news(career)
         self._upcoming(career)
@@ -122,15 +124,32 @@ class StoryEngine:
             title, body = clean(v.get("ltit")), clean(v.get("ydob"))
             if not title:
                 continue
+            original = (v.get("tdP3") or {}).get("target") if isinstance(v.get("tdP3"), dict) else None
+            if original and (len(body) < 30 or body.startswith("我转发")):  # "I forward this news": read the article
+                try:
+                    art = self.bridge.query_target(original, ["ltit", "ydob"])
+                    body = clean(art.get("ydob")) or body
+                    v = v | {"ydob": art.get("ydob") or v.get("ydob")}
+                except BridgeUnavailable:
+                    pass
             date = v.get("AMqC") if isinstance(v.get("AMqC"), str) else career.date
             people = list(dict.fromkeys(r for r in _links(v.get("ltit")) + _links(v.get("ydob"))
                                         if r.startswith("01")))
             weight = news_weight(title)
+            origin = None
+            others = [r for r in people if r != career.manager_id]
+            name = career.manager_name
+            if name and title.startswith(name):
+                origin, weight = "manager_said", max(weight, 1.5)       # his own words, reported
+            elif others and (name and name in title or ("新闻发布会" in body and (name in body or career.team_name in body))):
+                origin, weight = "manager_talk", max(weight, 1.8)       # another manager on him or his team
             payload = {"id": news_id, "title": title, "body": body[:1500], "from": _ref(v.get("spin")),
+                       "origin": origin,
                        "fm_posts": self.fm_posts(v.get("wZa ")),
                        "people": people, "names": {r: self.name(r) for r in people[:6]}, "weight": weight}
             if not store.add_event("news", date, payload, event_key=f"news:{news_id}"):
                 continue
+            self._learn_journalists(career, people, body)
             self.new_news = True
             if weight < 1:
                 continue
@@ -138,6 +157,49 @@ class StoryEngine:
                 if person in squad:
                     store.add_memory(person, f"新闻上说：「{title}」", date, "news", weight * 0.8, "news",
                                      f"news:{news_id}")
+
+    def _learn_journalists(self, career: Career, people: list[str], body: str) -> None:
+        """People named in the news who work for a media outlet become known journalists (they may get in touch)."""
+        if "记者" not in body and "journalist" not in body.lower():
+            return
+        for ref in people[:8]:
+            if ref == career.manager_id or career.store.event_by_key(f"journalist:{ref}"):
+                continue
+            raw = self.bridge.query(ref, ["SdeM", "eman", "dinu"])
+            outlet = raw.get("SdeM")
+            if isinstance(outlet, dict) and outlet.get("ref"):
+                career.store.add_event("journalist", career.date, {
+                    "id": ref, "name": clean(raw.get("eman")) or ref, "outlet": self.name(outlet["ref"]),
+                    "uid": raw.get("dinu") if isinstance(raw.get("dinu"), int) else None}, event_key=f"journalist:{ref}")
+
+    def backfill_origins(self, career: Career) -> None:
+        """Once per memory: tag news read before managers' words were recognised (and read forwarded articles)."""
+        if career.store.get_meta("news_origin_v1"):
+            return
+        news = {(e["payload"] or {}).get("id"): e for e in career.store.events("news", limit=500)}
+        for item in self.bridge.query(career.manager_id, ["SWEN"]).get("SWEN") or []:
+            target = (item or {}).get("target") if isinstance(item, dict) else None
+            e = news.get(target_pairs(target or "").get("dinu"))
+            if not e or (e["payload"] or {}).get("origin_checked") or (e["payload"] or {}).get("origin") in ("rumour", "transfer", "touchline", "social", "media"):
+                continue
+            p = dict(e["payload"] or {})
+            title, body, people = p.get("title") or "", p.get("body") or "", p.get("people") or []
+            v = self.bridge.query_target(target, ["tdP3"])
+            original = (v.get("tdP3") or {}).get("target") if isinstance(v.get("tdP3"), dict) else None
+            if original and (len(body) < 30 or body.startswith("我转发")):
+                art = self.bridge.query_target(original, ["ydob"]).get("ydob")
+                body = clean(art) or body
+                people = list(dict.fromkeys(people + [r for r in _links(art) if r.startswith("01")]))
+                p["people"] = people
+            name, others = career.manager_name, [r for r in people if r != career.manager_id]
+            origin = None
+            if name and title.startswith(name):
+                origin, p["weight"] = "manager_said", max(p.get("weight") or 1, 1.5)
+            elif others and (name and name in title or ("新闻发布会" in body and (name in body or career.team_name in body))):
+                origin, p["weight"] = "manager_talk", max(p.get("weight") or 1, 1.8)
+            career.store.update_event(e["event_key"], p | {"origin": origin, "body": body[:1500], "origin_checked": True})
+            self._learn_journalists(career, people, body)
+        career.store.set_meta("news_origin_v1", "1")
 
     def backfill_posts(self, career: Career) -> None:
         """Once per memory: FM's posts under news read before posts were collected."""

@@ -31,6 +31,7 @@ from .stats import season_values
 from .squad import Roster
 
 MAX_AGE_DAYS = 5            # events older than this get no posts
+JOBHUNT_EVERY_DAYS = 3     # posts about an unemployed manager's next job
 MAX_EVENTS_PER_REFRESH = 3  # one model call each
 LIFE_POST_DAYS = 3          # a player life post at most this often
 FAN_MOOD_LIMIT = 10
@@ -79,7 +80,7 @@ REPLY_SCHEMA = {"type": "object", "additionalProperties": False,
                                "headline": {"type": "string", "description": "a news headline if uproar >= 2, else empty"}}}
 
 RULES = """Write in Simplified Chinese, like real Instagram: short, informal, emotional, emoji and hashtags \
-(#莱斯特城#) welcome. Fans have made-up names and short handles; opinionated, often unfair, some loyal, some toxic \
+(#ClubName#) welcome. Fans have made-up names and short handles; opinionated, often unfair, some loyal, some toxic \
 (no slurs). Pundits, media and the club are verified; the club account sounds official and upbeat. Players may only \
 be the real players listed, writing in first person about themselves. People sometimes @mention the manager \
 (write "@{manager}" in the text and set mentions_manager). Facts (results, scores, scorers, ratings, stats, \
@@ -278,10 +279,20 @@ class SocialFeed:
             key = f"pressconf:{day}"
             if key not in done:
                 out.append({"key": key, "kind": "press_conference", "date": day, "payload": {"answers": answers}})
-        if f"squadlife:{career.date}" not in done:
-            out.append({"key": f"squadlife:{career.date}", "kind": "squad_life", "date": career.date, "payload": {}})
-        if f"media:{career.date}" not in done:
-            out.append({"key": f"media:{career.date}", "kind": "media_day", "date": career.date, "payload": {}})
+        if career.unemployed:  # between jobs: the football world talks about where he goes next
+            last = max((k.split(":", 1)[1] for k in done if str(k).startswith("jobhunt:")), default="")
+            if not last or _age(career, last) >= JOBHUNT_EVERY_DAYS:
+                out.append({"key": f"jobhunt:{career.date}", "kind": "job_hunt", "date": career.date, "payload": {
+                    "former": career.store.get_meta("former_team_name") or ""}})
+        else:
+            if f"squadlife:{career.date}" not in done:
+                out.append({"key": f"squadlife:{career.date}", "kind": "squad_life", "date": career.date, "payload": {}})
+            if f"media:{career.date}" not in done:
+                out.append({"key": f"media:{career.date}", "kind": "media_day", "date": career.date, "payload": {}})
+        for e in career.store.events("job_change", limit=10):
+            key = e.get("event_key")
+            if key and key not in done and _age(career, e["game_date"]) <= MAX_AGE_DAYS:
+                out.append({"key": key, "kind": "job_change", "date": e["game_date"], "payload": e["payload"] or {}})
         for kind in ("upcoming", "match", "news"):
             for e in career.store.events(kind, limit=40):
                 p = e["payload"] or {}
@@ -345,6 +356,25 @@ class SocialFeed:
         if ev["kind"] == "press_answer":
             return (f"Press conference {ev['date']}: asked 「{p.get('question')}」, the manager said 「{p.get('answer')}」. "
                     f"Headline: {p.get('headline')}")
+        if ev["kind"] == "job_hunt":
+            return (f"{ev['date']}: the manager is currently without a club" + (f" (he left {p.get('former')})" if p.get("former") else "")
+                    + ". The football world wonders where he goes next: pundits and transfer insiders speculate using "
+                    "only vacancies, sackings and managers under pressure from the recent news; fans of those clubs "
+                    "say whether they want him; fans of his old club miss him or not; a former player may post support.")
+        if ev["kind"] == "job_change":
+            if p.get("to"):
+                return (f"{ev['date']}: the manager has taken over at {p.get('to_name')}"
+                        + (f" (he left {p.get('from_name')})" if p.get("from") else "")
+                        + ". The new club announces it; its fans react (hopeful, sceptical); fans of his old club too.")
+            return (f"{ev['date']}: the manager is no longer in charge of {p.get('from_name')}. Reactions: the club's "
+                    f"statement, fans, pundits, players who worked with him.")
+        if p.get("origin") == "manager_talk":
+            return (f"Managers' war of words {ev['date']}: {p.get('title')}. What was said (FM's report, quote it "
+                    f"faithfully, never add words): {(p.get('body') or '')[:900]}. Pundits, both sets of fans and "
+                    f"football accounts react; some @mention the manager asking for his answer.")
+        if p.get("origin") == "manager_said":
+            return (f"{ev['date']}: {p.get('title')}. {(p.get('body') or '')[:600]} Fans and pundits react to "
+                    f"what the manager said.")
         if p.get("origin") in ("rumour", "transfer"):
             clubs = "、".join((p.get("clubs") or {}).values())
             return (f"Transfer talk {ev['date']}: {p.get('title')}" + (f" (reported by {p.get('outlet')})" if p.get("outlet") else "")
@@ -411,7 +441,9 @@ class SocialFeed:
                 f"Today: {career.date}.\n"
                 f"Supporters' mood toward the manager (-10 furious .. 10 adoring): {self.fan_mood(career)}\n"
                 "Recent results and news:\n" + "\n".join(f"- {x}" for x in story.recent_world(career)) +
-                "\nWHO OUR PLAYERS ARE (the only ones who may post as players):\n" + self._who(career, players) +
+                ("\nTHE MANAGER HAS NO CLUB AT THE MOMENT: no player posts as 'our' player; former players "
+                 "may post about him.\n" if career.unemployed else
+                 "\nWHO OUR PLAYERS ARE (the only ones who may post as players):\n" + self._who(career, players)) +
                 "\nTRANSFER TALK (clubs interested in our players, media rumours):\n" + self._transfer_talk(career) +
                 ("\nWhat the manager wrote on social media lately:\n" + "\n".join(f"- {x}" for x in mine) if mine else ""))
 
@@ -486,6 +518,11 @@ class SocialFeed:
                               f"with 6 to 10 fan comments: who they want in the starting XI and why (real players, by "
                               f"position and form), score predictions, betting picks and parlays using ONLY the odds "
                               f"given (no other numbers), some @mentioning the manager with demands.")
+                if ev["kind"] in ("job_hunt", "job_change"):
+                    system = (f"You write the Instagram reaction about {career.manager_name}, a football manager, in the "
+                              f"world of Football Manager 27. {RULES.replace('{manager}', career.manager_name)} Write 1 "
+                              f"to 3 posts (a football account or insider, a club, a pundit; picture 'none'), each with "
+                              f"4 to 8 comments from fans of different clubs. Only clubs and facts named in the context.")
                 if ev["kind"] == "press_conference":
                     system = (f"You write the Instagram reaction to {career.manager_name}'s press conference at "
                               f"{career.team_name}. {RULES.replace('{manager}', career.manager_name)} Write 1 to 3 posts "

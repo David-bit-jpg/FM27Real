@@ -550,6 +550,7 @@ def background(engine: Engine, interval: float = 3.0) -> None:
                 mem.forget(career.store, career.date)
                 career.store.set_meta("forgotten_on", career.date)
             engine.story.backfill_posts(career)
+            engine.story.backfill_origins(career)
             engine.social.ingest_fm(career)
         except BridgeUnavailable:
             pass

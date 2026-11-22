@@ -178,7 +178,7 @@ class PressRoom:
 
     def _squad_positions(self, career: Career) -> list[str]:
         """Every first-team player's position (FM's own wording), read once per game day."""
-        if self.positions[0] != career.date:
+        if self.positions[0] != f"{career.key}:{career.team_id}:{career.date}":
             lines = []
             try:
                 for ref in self.bridge.team(career.team_id)["squad"]:
@@ -188,7 +188,7 @@ class PressRoom:
                         lines.append(f"{name}: {pos}" if pos else name)
             except BridgeUnavailable:
                 return self.positions[1]
-            self.positions = (career.date, lines)
+            self.positions = (f"{career.key}:{career.team_id}:{career.date}", lines)
         return self.positions[1]
 
     # --- model steps -------------------------------------------------------------------

@@ -223,9 +223,11 @@ class NativeSync:
         return info
 
     def _squad(self, career: Career) -> set[str]:
-        if not self.squad:
+        key = (career.key, career.team_id, career.date)  # another save or club: read again
+        if not self.squad or getattr(self, "_squad_key", None) != key:
             try:
                 self.squad = set(self.bridge.team(career.team_id)["squad"])
+                self._squad_key = key
             except BridgeUnavailable:
                 pass
         return self.squad

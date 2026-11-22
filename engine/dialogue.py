@@ -128,8 +128,10 @@ def build_system(snap: dict, career: Career, canon: list[dict], memories: list[d
                    f"stories; you remember what the manager told you and the press before, and you are not his friend "
                    f"(friendly or hostile depending on how he has treated you). He may refuse to talk.")
     else:
+        role = (f"the manager of {career.team_name}" if not career.unemployed else
+                f"a football manager currently without a club (last club: {career.store.get_meta('former_team_name') or 'unknown'})")
         framing = (f"You are {snap.get('name')}, a real person in the world of Football Manager 27. You are talking "
-                   f"privately with {career.manager_name}, the manager of {career.team_name}.")
+                   f"privately with {career.manager_name}, {role}.")
     return f"""{framing} Today is {career.date} in the game.
 
 Stay fully in character. You are not an AI and you never mention games, prompts or models.

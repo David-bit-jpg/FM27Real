@@ -22,7 +22,7 @@ class Roster:
     def players(self, career: Career) -> list[dict]:
         with self._lock:
             c = self._cache
-            if c and c[0] == career.key and c[1] == career.date:
+            if c and c[0] == (career.key, career.team_id) and c[1] == career.date:
                 return c[2]
             try:
                 social = {p["id"]: p for p in self.bridge.dressing_room(career.team_id).get("players") or []}
@@ -40,7 +40,7 @@ class Roster:
                                 "happiness": s.get("happiness") or []})
             except BridgeUnavailable:
                 return c[2] if c else []
-            self._cache = (career.key, career.date, out)
+            self._cache = ((career.key, career.team_id), career.date, out)
             return out
 
     def at_club(self, career: Career) -> list[dict]:

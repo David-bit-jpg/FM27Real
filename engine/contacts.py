@@ -36,6 +36,10 @@ POOR_RATING = 6.0
 INJURY_WORDS = ("伤", "缺席", "injur")
 
 
+FUTURE_EVERY_DAYS = 5   # a journalist asks the manager without a club about his plans
+JOB_WORDS = ("面试", "职位", "空缺", "解雇", "下课", "帅位", "招聘", "主教练", "求职", "离任")
+
+
 def _age(career: Career, d: str | None) -> int:
     try:
         return (Date.fromisoformat(career.date) - Date.fromisoformat(d or "")).days
@@ -58,7 +62,7 @@ class ContactEngine:
         if store.get_meta("dressing_room_checked") != career.date:  # once a game day
             store.set_meta("dressing_room_checked", career.date)
             try:
-                candidates += self._dressing_room(career)
+                candidates += self._between_jobs(career) if career.unemployed else self._dressing_room(career)
             except Exception:
                 pass
         if not events and not candidates:
@@ -128,6 +132,30 @@ class ContactEngine:
             store.set_meta("last_complaint", career.date)
         return out
 
+    # --- between jobs: the manager without a club ---------------------------------------
+    def _between_jobs(self, career: Career) -> list[tuple[float, dict]]:
+        store = career.store
+        out = []
+        last = store.get_meta("last_future_question") or ""
+        if not last or _age(career, last) >= FUTURE_EVERY_DAYS:
+            j = self._journalist(career, prefer_hostile=False)
+            if j:
+                former = store.get_meta("former_team_name") or ""
+                out.append((1.6, j | {
+                    "source": f"future:{career.date}", "preview": f"{j['outlet']} 的{j['name']}想问问你的下一步",
+                    "reason": f"The manager is currently without a club" + (f" (his last club: {former})" if former else "")
+                              + ". You want to know his plans: is he applying for jobs, which kind of club, has anyone "
+                              "called, what did he learn from his last job. Use only vacancies and sackings that appear "
+                              "in the recent news; never invent offers or interviews."}))
+                store.set_meta("last_future_question", career.date)
+        return out
+
+    def _former_player(self, career: Career, team: str | None) -> str | None:
+        """The player of a club the manager left who liked him most (he may still write)."""
+        squad = self.bridge.team(team)["squad"] if team else []
+        warm = sorted(squad, key=lambda r: -(career.store.relation(r)["trust"] + career.store.relation(r)["liking"]))
+        return next((r for r in warm if career.store.relation(r)["liking"] > 0), None)
+
     def _person(self, ref: str, role: str = "player") -> dict:
         return {"person": ref, "name": self.story.name(ref), "role": role}
 
@@ -179,6 +207,36 @@ class ContactEngine:
                     "source": key + ":j", "preview": f"{j['outlet']} 的{j['name']}想问你转会传闻",
                     "reason": f"Transfer rumour: 「{title}」 ({p.get('outlet') or 'the media'}). You want the manager's "
                               f"comment for your story: is it true, is the player for sale, is the club interested?"}))
+        elif kind == "job_change":
+            if p.get("from"):  # he left his club: someone from the old dressing room writes
+                ref = self._former_player(career, p["from"])
+                if ref:
+                    out.append((2.0, self._person(ref) | {
+                        "source": key, "preview": f"{self.story.name(ref)}给你发来消息",
+                        "reason": f"Your manager {career.manager_name} has just left {p.get('from_name')}"
+                                  + (f" for {p.get('to_name')}" if p.get("to") else "") + ". You write to him about it, "
+                                  "as fits your relationship and your character."}))
+            j = self._journalist(career, prefer_hostile=False)
+            if j:
+                what = (f"has just taken over at {p.get('to_name')}" if p.get("to") else
+                        f"is no longer the manager of {p.get('from_name')}")
+                out.append((1.8, j | {
+                    "source": key + ":j", "preview": f"{j['outlet']} 的{j['name']}想采访你",
+                    "reason": f"{career.manager_name} {what}. You want his first words for your story."}))
+        elif kind == "news" and career.unemployed and any(w in (p.get("title") or "") for w in JOB_WORDS):
+            j = self._journalist(career, prefer_hostile=False)
+            if j:
+                out.append((1.4, j | {
+                    "source": key, "preview": f"{j['outlet']} 的{j['name']}想问你：「{p.get('title')}」",
+                    "reason": f"News: 「{p.get('title')}」. The manager is without a club; you ask whether he is "
+                              f"interested or has been contacted. Never claim he was offered anything."}))
+        elif kind == "news" and p.get("origin") == "manager_talk":
+            j = self._journalist(career, prefer_hostile=False)
+            if j:
+                out.append((1.7, j | {
+                    "source": key, "preview": f"{j['outlet']} 的{j['name']}想听你回应：「{p.get('title')}」",
+                    "reason": f"Another manager talked about {career.manager_name} or his team: 「{p.get('title')}」. "
+                              f"What he said: {(p.get('body') or '')[:500]}. You want the manager's response."}))
         elif kind == "news" and (p.get("weight") or 1) >= 1.5:
             squad = set(self.bridge.team(career.team_id)["squad"])
             title = p.get("title") or ""

@@ -232,6 +232,8 @@ class Bridge:
     def query(self, record: str, codes: list[str]) -> dict:
         """Values of the given property codes for one record (missing = not applicable)."""
         out: dict = {}
+        if not isinstance(record, str) or not record:  # e.g. no club: nothing to read
+            return out
         for i in range(0, len(codes), BATCH):
             chunk = ",".join(urllib.parse.quote(c, safe="#") for c in codes[i : i + BATCH])
             out.update(self._get(f"/query?id={record}&props={chunk}"))
@@ -258,12 +260,15 @@ class Bridge:
             return False
 
     def game(self) -> dict:
-        """Current date, the human manager and team, save name and career start."""
+        """Current date, the human manager and team, save name and career start.
+        team is None while the manager has no club."""
         raw = self.query_target(GAME_TARGET, list(GAME_FIELDS.values()))
         g = {}
         for field, code in GAME_FIELDS.items():
             v = raw.get(code)
             g[field] = v["ref"] if isinstance(v, dict) and "ref" in v else _text(v)
+        if not isinstance(g.get("team"), str) or not g["team"]:
+            g["team"] = None
         return g
 
     def type_codes(self, type_name: str) -> list[str]:
@@ -294,7 +299,9 @@ class Bridge:
                     p[kind] = str(path)
         return p
 
-    def team(self, record: str) -> dict:
+    def team(self, record: str | None) -> dict:
+        if not record:  # the manager has no club
+            return {"id": None, "name": "", "squad": [], "staff": []}
         raw = self.query(record, list(TEAM_FIELDS.values()))
         refs = lambda v: [x["ref"] for x in v if isinstance(x, dict) and "ref" in x] if isinstance(v, list) else []
         return {
@@ -304,7 +311,9 @@ class Bridge:
             "staff": refs(raw.get(TEAM_FIELDS["staff"])),
         }
 
-    def name(self, record: str) -> str:
+    def name(self, record: str | None) -> str:
+        if not record:
+            return ""
         return _text(self.query(record, ["eman"]).get("eman")) or record
 
     def person_origin(self, record: str) -> dict:
@@ -342,6 +351,8 @@ class Bridge:
 
     def dressing_room(self, team_record: str) -> dict:
         """Team dynamics, social groups and every first-team player's social state."""
+        if not team_record:
+            return {"team": "", "dynamics": {}, "social_groups": [], "players": []}
         raw = self.query(team_record, list(TEAM_SOCIAL.values()))
         groups = _props(raw.get(TEAM_SOCIAL["groups"]))
         group_lists = [_refs(groups.get(code)) for code in ("Li3E", "Mi3E", "Ni3E")]
