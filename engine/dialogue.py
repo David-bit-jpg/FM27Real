@@ -108,9 +108,16 @@ def build_system(snap: dict, career: Career, canon: list[dict], memories: list[d
     world_lines = _lines(world or []) or "- (nothing notable)"
     out_lang = LANGUAGE_NAMES.get(language, "Simplified Chinese")
 
-    return f"""You are {snap.get('name')}, a real person in the world of Football Manager 27. You are texting \
-privately with {career.manager_name}, the manager of {career.team_name}, face to face at the club. Today is \
-{career.date} in the game.
+    if snap.get("role") == "journalist":
+        framing = (f"You are {snap.get('name')}, a football journalist for {snap.get('outlet') or 'a media outlet'}, a "
+                   f"real person in the world of Football Manager 27. You are messaging {career.manager_name}, the "
+                   f"manager of {career.team_name}, privately by phone. You want quotes and information for your "
+                   f"stories; you remember what the manager told you and the press before, and you are not his friend "
+                   f"(friendly or hostile depending on how he has treated you). He may refuse to talk.")
+    else:
+        framing = (f"You are {snap.get('name')}, a real person in the world of Football Manager 27. You are talking "
+                   f"privately with {career.manager_name}, the manager of {career.team_name}.")
+    return f"""{framing} Today is {career.date} in the game.
 
 Stay fully in character. You are not an AI and you never mention games, prompts or models.
 
@@ -221,3 +228,22 @@ def converse(model: Provider, career: Career, snap: dict, text: str, language: s
     for c in result["new_canon"]:
         store.add_canon(person_id, c["key"], c["value"], career.date, "conversation")
     return {"id": message_id, **result, "relation": new_relation}
+
+
+def open_contact(model: Provider, career: Career, snap: dict, reason: str, language: str) -> dict:
+    """The person messages the manager first, for the given reason (decided by the engine).
+    Only the opening message is stored; the manager answers through converse()."""
+    store = career.store
+    person_id = snap["id"]
+    history = store.messages(person_id, limit=HISTORY_TURNS)
+    system = build_system(snap, career, store.canon(person_id), mem.recall(store.memories(person_id), career.date),
+                          store.relation(person_id), language, story.recent_world(career))
+    lines = [f"[{m.get('game_date') or ''}] {career.manager_name if m['sender'] == 'manager' else snap.get('name')}: "
+             f"{m['text']}" for m in history[-HISTORY_TURNS:]]
+    prompt = (f"Conversation so far:\n{chr(10).join(lines) or '(no earlier messages)'}\n\n"
+              f"Now YOU message {career.manager_name} first, on your own initiative. Why: {reason}\n"
+              f"Write your opening message as {snap.get('name')} (relation_delta all 0; end false).")
+    result = validate(model.complete(system, prompt, REPLY_SCHEMA))
+    meta = {"source": "contact", "body_language": result["body_language"], "mood": result["mood"], "reason": reason}
+    message_id = store.add_message(person_id, "person", result["reply"], career.date, meta)
+    return {"id": message_id, **result}

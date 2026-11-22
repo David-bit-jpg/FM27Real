@@ -365,10 +365,16 @@ static void poll_press(void) {
         NSDictionary *j = (!e && d) ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
         BOOL ok = [j isKindOfClass:NSDictionary.class];
         BOOL active = ok && [j[@"active"] isEqual:@YES], dismissed = ok && [j[@"dismissed"] isEqual:@YES];
+        long unread = ok && [j[@"unread"] isKindOfClass:NSNumber.class] ? [j[@"unread"] longValue] : 0;
         (void)r;
         dispatch_async(dispatch_get_main_queue(), ^{
             g_press_inflight = NO;
             press_changed(active, dismissed);
+            // New messages: the button shows them when no profile is open and nothing else uses it.
+            if (!g_press_mode && !g_focus && !g_visible) {
+                g_chat_button.hidden = unread <= 0;
+                if (unread > 0) set_button_title([NSString stringWithFormat:@"📱 %ld 条新消息", unread]);
+            }
         });
     }] resume];
 }

@@ -14,6 +14,12 @@ def build(bridge: Bridge, person_id: str) -> dict:
     snap = bridge.person(person_id)
     snap["social"] = bridge.person_social(person_id)
     snap["origin"] = bridge.person_origin(person_id)
+    try:  # journalists: their media outlet
+        media = bridge.query(person_id, ["SdeM"]).get("SdeM")
+        if isinstance(media, dict) and media.get("ref"):
+            snap["role"], snap["outlet"] = "journalist", bridge.name(media["ref"])
+    except Exception:
+        pass
     team_id = snap.get("team")
     if isinstance(team_id, str):
         snap["team_name"] = bridge.name(team_id)

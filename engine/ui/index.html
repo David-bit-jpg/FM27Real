@@ -34,6 +34,10 @@
 
   .person { display: flex; align-items: center; gap: 11px; padding: 9px 14px; cursor: pointer; }
   .person:hover { background: #ffffff0d; }
+  .person.unread .name::after { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                                background: var(--accent); margin-left: 7px; vertical-align: middle; }
+  .badge { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 8px;
+           background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
   .person .who { flex: 1; min-width: 0; }
   .person .name { font-weight: 600; }
   .person .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -123,7 +127,7 @@
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
-  zh: { phone: "主教练手机", messages: "消息", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
+  zh: { phone: "主教练手机", messages: "消息", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
         pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
         potm: "全场最佳", scorers: "进球", showAll: "显示全部收件箱", showImportant: "只看重要的", results: { "赢了": "胜", "输了": "负", "打平": "平" }, settings: "设置", recent: "最近聊天", squad: "一线队",
         noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
@@ -134,7 +138,7 @@ const T = {
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
-  en: { phone: "Manager's phone", messages: "Messages", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
+  en: { phone: "Manager's phone", messages: "Messages", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
         pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
         potm: "Player of the match", scorers: "Goals", showAll: "Show whole inbox", showImportant: "Important only", results: { "赢了": "W", "输了": "L", "打平": "D" }, settings: "Settings", recent: "Recent", squad: "First team",
         noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
@@ -187,11 +191,18 @@ function banner(text, isErr) {
   b.hidden = !text; b.textContent = text || ""; b.className = "banner" + (isErr ? " err" : "");
 }
 
+let unreadCount = 0;
+function setUnread(n) {
+  unreadCount = n || 0;
+  const tab = $("tab-home"); tab.textContent = t("messages");
+  if (unreadCount) tab.append(el("span", { class: "badge" }, String(unreadCount)));
+}
+
 function setHeader(title, showBack) {
   document.body.classList.toggle("pressmode", view === "press");
   $("title").textContent = title;
   $("back").hidden = !showBack;
-  $("tab-home").textContent = t("messages"); $("tab-settings").textContent = t("settings"); $("tab-feed").textContent = t("feed");
+  setUnread(unreadCount); $("tab-settings").textContent = t("settings"); $("tab-feed").textContent = t("feed");
   $("tab-feed").classList.toggle("on", view === "feed");
   $("tab-home").classList.toggle("on", view === "home" || view === "chat");
   $("tab-settings").classList.toggle("on", view === "settings");
@@ -202,17 +213,34 @@ function setHeader(title, showBack) {
 async function showHome() {
   view = "home"; current = null; setHeader(t("phone"), false);
   const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("loading")));
-  let data;
-  try { data = await api("/api/contacts"); banner(""); }
+  let data, inbox = { items: [], unread: 0 };
+  try { [data, inbox] = await Promise.all([api("/api/contacts"), api("/api/inbox").catch(() => inbox)]); banner(""); }
   catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
   if (view !== "home") return;
+  setUnread(inbox.unread);
   const row = (p, sub) => el("div", { class: "person", onclick: () => openPerson(p.id) }, avatar(p),
     el("div", { class: "who" }, el("div", { class: "name" }, p.name), el("div", { class: "sub" }, sub)));
+  const faces = Object.fromEntries(data.squad.map(p => [p.id, p.uid]));
+  const contact = c => {
+    const r = el("div", { class: "person" + (c.status === "unread" ? " unread" : "") },
+      avatar({ name: c.name, uid: c.uid || faces[c.person] }),
+      el("div", { class: "who" }, el("div", { class: "name" }, c.name + (c.role === "journalist" ? ` · ${t("journalist")}` : "")),
+        el("div", { class: "sub" }, c.preview)));
+    r.onclick = async () => {
+      if (c.status !== "unread") return openPerson(c.person);
+      r.querySelector(".sub").textContent = t("opening");
+      try { const o = await api("/api/inbox/open", { key: c.key }); openPerson(o.person); }
+      catch (e) { r.querySelector(".sub").textContent = `${e.code === "model" ? t("modelErr") : ""}${e.message}`; }
+    };
+    return r;
+  };
+  const fresh = inbox.items.filter(c => c.status === "unread");
   main.replaceChildren(...[
+    fresh.length ? [el("div", { class: "section" }, t("inbox")), fresh.map(contact)] : [],
     el("div", { class: "section" }, t("recent")),
     data.recent.length ? data.recent.map(p => row(p, p.last)) : el("div", { class: "empty" }, t("noRecent")),
     el("div", { class: "section" }, t("squad")),
-    data.squad.map(p => row(p, p.position))].flat());
+    data.squad.map(p => row(p, p.position))].flat(Infinity));
 }
 
 // --- feed ----------------------------------------------------------------------

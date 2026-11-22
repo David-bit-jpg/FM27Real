@@ -233,6 +233,19 @@ class Store:
             self._db.commit()
             return cur.rowcount > 0
 
+    def events_after(self, event_id: int, limit: int = 500) -> list[dict]:
+        """Events recorded after the given row id, oldest first (with their ids)."""
+        rows = self._exec("SELECT id, game_date, kind, payload, event_key FROM events WHERE id > ? ORDER BY id LIMIT ?",
+                          (event_id, limit))
+        return [dict(r) | {"payload": json.loads(r["payload"]) if r["payload"] else None} for r in rows]
+
+    def event_by_key(self, event_key: str) -> dict | None:
+        rows = self._exec("SELECT id, game_date, kind, payload, event_key FROM events WHERE event_key = ?", (event_key,))
+        return dict(rows[0]) | {"payload": json.loads(rows[0]["payload"]) if rows[0]["payload"] else None} if rows else None
+
+    def update_event(self, event_key: str, payload: dict) -> None:
+        self._exec("UPDATE events SET payload = ? WHERE event_key = ?", (json.dumps(payload, ensure_ascii=False), event_key))
+
     def events(self, kind: str | None = None, since: str | None = None, limit: int = 200) -> list[dict]:
         sql, args = "SELECT game_date, kind, payload, event_key FROM events WHERE 1=1", []
         if kind:

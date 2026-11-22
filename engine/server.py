@@ -36,6 +36,7 @@ from .model import PRESETS, ModelError, detect_provider, provider_from_settings
 from .native import NativeSync
 from .story import StoryEngine
 from .press import PressRoom
+from .contacts import ContactEngine
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
@@ -104,6 +105,7 @@ class Engine:
         self.native = NativeSync(self.bridge)
         self.story = StoryEngine(self.bridge)
         self.press = PressRoom(self.bridge, self.native)
+        self.contacts = ContactEngine(self.story)
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
@@ -179,7 +181,17 @@ def make_handler(engine: Engine):
                 if method == "GET" and path == "/api/contacts":
                     return self._contacts()
                 if method == "GET" and path == "/api/press/active":
-                    return self._json(200, engine.press.status())
+                    status = engine.press.status()
+                    try:
+                        status["unread"] = sum(1 for c in engine.careers.current().store.events("contact", limit=200)
+                                               if (c["payload"] or {}).get("status") == "unread")
+                    except BridgeUnavailable:
+                        status["unread"] = 0
+                    return self._json(200, status)
+                if method == "GET" and path == "/api/inbox":
+                    return self._inbox()
+                if method == "POST" and path == "/api/inbox/open":
+                    return self._open_contact()
                 if method == "POST" and path == "/api/press/resume":
                     engine.press.resume()
                     return self._json(200, {"ok": True})
@@ -273,6 +285,32 @@ def make_handler(engine: Engine):
             items.sort(key=lambda i: (i["date"] or "", i["kind"] == "match"), reverse=True)
             self._json(200, {"items": items[:120]})
 
+        def _inbox(self) -> None:
+            career = engine.careers.current()
+            items = [{"key": c["event_key"], "date": c["game_date"], **(c["payload"] or {})}
+                     for c in career.store.events("contact", limit=40)]
+            items.reverse()
+            self._json(200, {"items": items, "unread": sum(1 for i in items if i.get("status") == "unread")})
+
+        def _open_contact(self) -> None:
+            key = str(self._body().get("key") or "")
+            career = engine.careers.current()
+            c = career.store.event_by_key(key)
+            if not c or c["kind"] != "contact":
+                return self._json(404, {"error": "no such contact"})
+            p = c["payload"] or {}
+            if p.get("status") == "unread":
+                model = self._model()
+                if model is None:
+                    return self._json(502, {"error": "no model configured", "code": "model"})
+                snap = snapshot.get(engine.bridge, career, p["person"])
+                try:
+                    dialogue.open_contact(model, career, snap, p.get("reason") or "", engine.settings["language"])
+                except ModelError as e:
+                    return self._json(502, {"error": str(e), "code": "model"})
+                career.store.update_event(key, p | {"status": "opened"})
+            self._json(200, {"person": p["person"]})
+
         def _model(self):
             try:
                 return provider_from_settings(engine.settings)
@@ -349,6 +387,7 @@ def background(engine: Engine, interval: float = 3.0) -> None:
         try:
             career = engine.careers.current()
             engine.story.poll(career)
+            engine.contacts.poll(career)
         except BridgeUnavailable:
             pass
         except Exception as e:  # never let the loop die
