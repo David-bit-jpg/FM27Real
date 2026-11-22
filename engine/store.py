@@ -195,6 +195,14 @@ class Store:
             self._db.commit()
             return cur.rowcount > 0
 
+    def all_memories(self) -> list[dict]:
+        return [dict(r) for r in self._exec("SELECT id, game_date, weight FROM memories")]
+
+    def delete_memories(self, ids: list[int]) -> None:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            self._exec(f"DELETE FROM memories WHERE id IN ({','.join('?' * len(chunk))})", tuple(chunk))
+
     def memories(self, person_id: str, limit: int = 300) -> list[dict]:
         rows = self._exec("SELECT game_date, text, source, weight, kind FROM memories WHERE person_id = ? "
                           "ORDER BY id DESC LIMIT ?", (person_id, limit))

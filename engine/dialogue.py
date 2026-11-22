@@ -20,7 +20,8 @@ MAX_REPLY_CHARS = 600
 REPLY_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["reply", "body_language", "mood", "relation_delta", "memory", "new_canon", "end"],
+    "required": ["reply", "body_language", "mood", "relation_delta", "memory", "new_canon", "end", "importance",
+                 "promise"],
     "properties": {
         "reply": {"type": "string", "description": "what the character says back"},
         "body_language": {"type": "string",
@@ -40,6 +41,12 @@ REPLY_SCHEMA = {
                       "properties": {"key": {"type": "string"}, "value": {"type": "string"}}},
         },
         "end": {"type": "boolean", "description": "true if the character wants to end the conversation"},
+        "importance": {"type": "integer", "minimum": 0, "maximum": 3,
+                       "description": "how much this exchange matters to you: 0 small talk, 1 nice or useful, "
+                                      "2 significant (praise or criticism that hits home), 3 life-changing"},
+        "promise": {"type": "string",
+                    "description": "if the manager promised you something concrete, the promise in a short third-person "
+                                   "sentence; else empty"},
     },
 }
 
@@ -203,6 +210,8 @@ def validate(result: dict) -> dict:
         "memory": str(result.get("memory") or "").strip()[:300],
         "new_canon": canon[:3],
         "end": bool(result.get("end")),
+        "importance": max(0, min(3, int(result.get("importance") or 0))) if str(result.get("importance") or 0).lstrip("-").isdigit() else 1,
+        "promise": str(result.get("promise") or "").strip()[:200],
     }
 
 
@@ -219,12 +228,19 @@ def converse(model: Provider, career: Career, snap: dict, text: str, language: s
     prompt = build_prompt(history, career.manager_name, snap.get("name", ""), text)
     # Ask first: if the model fails, nothing is stored and the manager can resend.
     result = validate(model.complete(system, prompt, REPLY_SCHEMA))
-    meta = {k: result[k] for k in ("body_language", "mood", "relation_delta", "memory", "new_canon", "end")}
+    meta = {k: result[k] for k in ("body_language", "mood", "relation_delta", "memory", "new_canon", "end", "importance",
+                                   "promise")}
     store.add_message(person_id, "manager", text, career.date)
     message_id = store.add_message(person_id, "person", result["reply"], career.date, meta)
-    if result["memory"]:
+    # What was said is a temporary memory: its weight (how long it lasts) follows how much it mattered.
+    memory_text = result["memory"] or (f"主教练对他说：「{text[:120]}」" if result["importance"] >= 1 else "")
+    if memory_text:
         strong = max(abs(v) for v in result["relation_delta"].values()) >= 2 or result["mood"] in ("angry", "excited", "sad")
-        store.add_memory(person_id, result["memory"], career.date, "conversation", 2.0 if strong else 1.0, "conversation")
+        weight = mem.IMPORTANCE_WEIGHT[result["importance"]] + (0.5 if strong else 0)
+        store.add_memory(person_id, memory_text, career.date, "conversation", weight, "conversation")
+    if result["promise"]:  # promises stay until kept or long overdue
+        store.add_memory(person_id, f"主教练的承诺：{result['promise']}", career.date, "conversation", mem.PROMISE_WEIGHT,
+                         "promise")
     new_relation = store.apply_relation(person_id, result["relation_delta"], career.date)
     for c in result["new_canon"]:
         store.add_canon(person_id, c["key"], c["value"], career.date, "conversation")

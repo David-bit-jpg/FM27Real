@@ -10,6 +10,9 @@ from datetime import date
 
 HALF_LIFE_DAYS = 14.0
 RECALL = 12  # memories given to the model per conversation
+FORGET_BELOW = 0.05  # memories weaker than this are forgotten for good (pruned once a game day)
+IMPORTANCE_WEIGHT = {0: 0.4, 1: 1.0, 2: 2.0, 3: 3.0}  # small talk fades in weeks, life-changing talk in months
+PROMISE_WEIGHT = 4.0  # a promise lasts about half a season
 
 
 def _days_between(a: str | None, b: str | None) -> float:
@@ -42,3 +45,13 @@ def relation_words(value: int) -> str:
     if value > -40:
         return "wary"
     return "hostile"
+
+
+def forget(store, today: str) -> int:
+    """Deletes memories that have faded below FORGET_BELOW. Returns how many were forgotten."""
+    gone = []
+    for row in store.all_memories():
+        if strength(row, today) < FORGET_BELOW:
+            gone.append(row["id"])
+    store.delete_memories(gone)
+    return len(gone)

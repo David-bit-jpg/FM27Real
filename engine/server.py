@@ -427,6 +427,10 @@ def background(engine: Engine, interval: float = 3.0) -> None:
             career = engine.careers.current()
             engine.story.poll(career)
             engine.contacts.poll(career)
+            if career.store.get_meta("forgotten_on") != career.date:  # once a game day
+                from . import memory as mem
+                mem.forget(career.store, career.date)
+                career.store.set_meta("forgotten_on", career.date)
             engine.story.backfill_posts(career)
             engine.social.ingest_fm(career)
         except BridgeUnavailable:
