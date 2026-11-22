@@ -40,9 +40,10 @@ def _age(career: Career, d: str | None) -> int:
 
 
 class ContactEngine:
-    def __init__(self, story: StoryEngine):
+    def __init__(self, story: StoryEngine, roster=None):
         self.story = story
         self.bridge = story.bridge
+        self.roster = roster  # players out on loan never get in touch first (they can still be messaged)
 
     # --- polling -----------------------------------------------------------------
     def poll(self, career: Career) -> None:
@@ -64,10 +65,11 @@ class ContactEngine:
         room = MAX_PER_DAY - len(today)
         unread = {(c["payload"] or {}).get("person") for c in store.events("contact", limit=200)
                   if (c["payload"] or {}).get("status") == "unread"}
+        away = {p["id"] for p in self.roster.players(career) if not p["at_club"]} if self.roster else set()
         for _, c in sorted(candidates, key=lambda x: -x[0]):
             if room <= 0:
                 break
-            if c["person"] in unread:
+            if c["person"] in unread or (c.get("role") == "player" and c["person"] in away):
                 continue
             c |= {"status": "unread", "created": career.date}
             if store.add_event("contact", career.date, c, event_key=f"contact:{c['source']}:{c['person']}"):

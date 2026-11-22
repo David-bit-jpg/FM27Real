@@ -27,6 +27,8 @@ from . import story
 from .bridge import BridgeUnavailable, _text
 from .career import Career
 from .model import ModelError, Provider
+from .stats import season_values
+from .squad import Roster
 
 MAX_AGE_DAYS = 5            # events older than this get no posts
 MAX_EVENTS_PER_REFRESH = 2  # one model call each
@@ -40,10 +42,15 @@ PERSON = {"type": "object", "additionalProperties": False,
                          "handle": {"type": "string"}, "text": {"type": "string"}, "likes": {"type": "integer"},
                          "mentions_manager": {"type": "boolean", "description": "the text @mentions the manager"}}}
 POST = {"type": "object", "additionalProperties": False,
-        "required": ["kind", "name", "handle", "text", "likes", "mentions_manager", "picture", "comments"],
+        "required": ["kind", "name", "handle", "text", "likes", "mentions_manager", "picture", "picture_player",
+                     "picture_quote", "comments"],
         "properties": PERSON["properties"] | {
-            "picture": {"type": "string", "description": "'match' (match card), 'club' (club logo), or the exact "
-                                                         "name of one of our players (his photo)"},
+            "picture": {"type": "string", "enum": ["result", "motm", "quote", "stat", "club", "none"],
+                        "description": "graphic for the post: result (full-time card), motm (player of the match "
+                                       "card), quote (a quote card), stat (a player's season number), club (logo), "
+                                       "none (text only; most player and fan posts)"},
+            "picture_player": {"type": "string", "description": "for motm/stat: exact name of one of our players"},
+            "picture_quote": {"type": "string", "description": "for quote: the exact quote, from the context"},
             "comments": {"type": "array", "items": PERSON}}}
 EVENT_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["posts"],
                 "properties": {"posts": {"type": "array", "items": POST}}}
@@ -88,9 +95,10 @@ def _visible(item: dict, now: datetime) -> bool:
 
 
 class SocialFeed:
-    def __init__(self, story_engine: story.StoryEngine):
+    def __init__(self, story_engine: story.StoryEngine, roster: Roster):
         self.story = story_engine
         self.bridge = story_engine.bridge
+        self.roster = roster
         self.lock = threading.Lock()
         self.clubs: dict[str, int | None] = {}   # team record -> club unique id (for logos)
         self.ids = itertools.count(int(datetime.now().timestamp()))
@@ -110,17 +118,8 @@ class SocialFeed:
         return self.clubs[team]
 
     def _players(self, career: Career) -> dict[str, dict]:
-        """Our first team by name: record and portrait id."""
-        out = {}
-        try:
-            for ref in self.bridge.team(career.team_id)["squad"]:
-                raw = self.bridge.query(ref, ["eman", "dinu"])
-                name = (_text(raw.get("eman")) or "").replace("​", "")
-                if name:
-                    out[name] = {"ref": ref, "uid": raw.get("dinu") if isinstance(raw.get("dinu"), int) else None}
-        except BridgeUnavailable:
-            pass
-        return out
+        """Our players at the club, by name (players out on loan do not post)."""
+        return {p["name"]: p | {"ref": p["id"]} for p in self.roster.at_club(career)}
 
     def _author(self, career: Career, a: dict, players: dict[str, dict]) -> dict | None:
         kind, name = a.get("kind"), str(a.get("name") or "").strip()[:40]
@@ -141,15 +140,40 @@ class SocialFeed:
                            "uid": uid, "club_uid": club, "verified": kind != "fan"},
                 "text": text, "likes": max(0, min(likes, 300000)), "mentions_manager": bool(a.get("mentions_manager"))}
 
-    def _picture(self, career: Career, hint: str, ev: dict | None, players: dict[str, dict]) -> dict | None:
+    def _picture(self, career: Career, raw: dict, ev: dict | None, players: dict[str, dict]) -> dict | None:
+        """A graphic card; every number on it comes from FM's data, never from the model."""
+        kind = raw.get("picture") or "none"
         p = (ev or {}).get("payload") or {}
-        if hint == "match" and ev and ev["kind"] == "match":
-            return {"type": "match", "home": {"name": p.get("home_name"), "club_uid": self.club_uid(p.get("home"))},
+        who = players.get(str(raw.get("picture_player") or "")) or {}
+        if kind == "result" and ev and ev["kind"] == "match":
+            return {"type": "result", "home": {"name": p.get("home_name"), "club_uid": self.club_uid(p.get("home"))},
                     "away": {"name": p.get("away_name"), "club_uid": self.club_uid(p.get("away"))},
-                    "score": p.get("score"), "competition": p.get("competition"), "date": ev.get("date")}
-        if hint in players and players[hint]["uid"]:
-            return {"type": "face", "uid": players[hint]["uid"], "name": hint}
-        return {"type": "logo", "club_uid": self.club_uid(career.team_id), "name": career.team_name}
+                    "score": p.get("score"), "competition": p.get("competition"), "date": ev.get("date"),
+                    "scorers": [f"{g['name']} {g['minute']}" for g in p.get("goals") or []][:8]}
+        if kind == "motm" and ev and ev["kind"] == "match" and who.get("id") in (p.get("ratings") or {}):
+            goals = sum(1 for g in p.get("goals") or [] if g.get("scorer") == who["id"])
+            assists = sum(1 for g in p.get("goals") or [] if g.get("assist") == who["id"])
+            return {"type": "motm", "name": who["name"], "uid": who.get("uid"), "rating": p["ratings"][who["id"]],
+                    "goals": goals, "assists": assists,
+                    "club_uid": self.club_uid(career.team_id), "competition": p.get("competition")}
+        if kind == "stat" and who:
+            values = season_values(self.bridge, who["id"])
+            if values:
+                attacker = any(w in who.get("position", "") for w in ("前锋", "边锋", "前腰", "攻击型"))
+                number, label = ((values.get("oGvo"), "本赛季进球") if attacker and values.get("oGvo")
+                                 else (values.get("RAvo"), "本赛季平均评分"))
+                if number:
+                    return {"type": "stat", "name": who["name"], "uid": who.get("uid"),
+                            "number": round(number, 2) if isinstance(number, float) else number, "label": label,
+                            "apps": values.get("pAvo"), "club_uid": self.club_uid(career.team_id)}
+        if kind == "quote" and raw.get("picture_quote"):
+            quote = str(raw["picture_quote"])[:120]
+            if ev and quote in self._describe(ev):  # only words that were really said
+                return {"type": "quote", "text": quote, "by": career.manager_name,
+                        "club_uid": self.club_uid(career.team_id)}
+        if kind == "club":
+            return {"type": "logo", "club_uid": self.club_uid(career.team_id), "name": career.team_name}
+        return None
 
     # --- reading -----------------------------------------------------------------
     def _all(self, career: Career, limit: int = 300) -> list[dict]:
@@ -315,13 +339,10 @@ class SocialFeed:
                     built = self._author(career, raw, players)
                     if not built:
                         continue
-                    hint = str(raw.get("picture") or "")
-                    if built["author"]["kind"] == "player":
-                        hint = built["author"]["name"]
                     comments = [self._comment(c, date=career.date) for c in
                                 (self._author(career, x, players) for x in raw.get("comments") or []) if c]
                     if self._store_post(career, ev["key"], self._describe(ev)[:200], built,
-                                        self._picture(career, hint, ev, players), comments, now,
+                                        self._picture(career, raw, ev, players), comments, now,
                                         f"social:{ev['key']}:{i}"):
                         n += 1
                 added += n
@@ -333,6 +354,7 @@ class SocialFeed:
             self.lock.release()
 
     def _life_post(self, career: Career, model: Provider, players: dict[str, dict], now: str) -> int:
+        """Now and then a player posts about his life, often with a teammate from his circle."""
         last = max((p.get("date") or "" for p in self._all(career) if p.get("source", "").startswith("life:")),
                    default="")
         if last and _age(career, last) < LIFE_POST_DAYS or not players:
@@ -340,14 +362,28 @@ class SocialFeed:
         recent = {p["author"]["name"] for p in self._all(career) if p["author"]["kind"] == "player"
                   and _age(career, p.get("date")) <= LIFE_POST_DAYS}
         name = random.choice([n for n in players if n not in recent] or list(players))
-        canon = career.store.canon(players[name]["ref"])
-        memories = [m["text"] for m in career.store.memories(players[name]["ref"])[-4:]]
-        system = (f"You write one Instagram post by {name}, a player at {career.team_name}, about his everyday life "
-                  f"or training (not a match result), with 3 to 6 comments. "
+        me = players[name]
+        circle = [n for n, p in players.items() if n != name and p.get("group") is not None and p["group"] == me.get("group")]
+        friend = random.choice(circle) if circle and random.random() < 0.6 else None
+        snap_lines = []
+        try:
+            origin = self.bridge.person_origin(me["ref"])
+            snap_lines.append(f"From {origin.get('birth_city') or ''} {origin.get('birth_region') or ''}".strip())
+        except Exception:
+            pass
+        canon = career.store.canon(me["ref"])
+        memories = [m["text"] for m in career.store.memories(me["ref"])[-4:]]
+        topic = (f"a moment with his teammate {friend} (a meal out, coffee, gaming, a day off, a birthday...); "
+                 f"{friend} comments too (kind player)") if friend else \
+            "his everyday life or training (food, family, a pet, the city, recovery, a hobby)"
+        system = (f"You write one Instagram post by {name}, a player at {career.team_name}, about {topic}. Not about a "
+                  f"match result. Most such posts have no graphic (picture 'none'). 3 to 6 comments. His voice is his "
+                  f"own: let his origin, habits and personality show; never a template. "
                   f"{RULES.replace('{manager}', career.manager_name)}")
-        prompt = (f"{self._context(career, players)}\n\nAbout {name}:\n" +
+        prompt = (f"{self._context(career, players)}\n\nAbout {name} ({me.get('position')}):\n" +
+                  "\n".join(f"- {x}" for x in snap_lines) + "\n" +
                   "\n".join(f"- {c['key']}: {c['value']}" for c in canon) + "\n" +
-                  "\n".join(f"- {m}" for m in memories) + f"\n\nThe post is by {name} (kind player, picture '{name}').")
+                  "\n".join(f"- {m}" for m in memories) + f"\n\nThe post is by {name} (kind player).")
         try:
             out = model.complete(system, prompt, EVENT_SCHEMA)
         except ModelError:
@@ -360,8 +396,8 @@ class SocialFeed:
             comments = [self._comment(c, date=career.date) for c in
                         (self._author(career, x, players) for x in raw.get("comments") or []) if c]
             return int(self._store_post(career, f"life:{career.date}:{name}", "", built,
-                                        self._picture(career, name, None, players), comments, now,
-                                        f"social:life:{career.date}:{players[name]['ref']}"))
+                                        self._picture(career, raw, None, players), comments, now,
+                                        f"social:life:{career.date}:{me['ref']}"))
         return 0
 
     def reply(self, career: Career, model: Provider, key: str | None, text: str, reply_to: int | None = None) -> dict:

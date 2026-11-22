@@ -32,6 +32,16 @@ def _fmt(v, kind: str) -> str:
     return str(int(v))
 
 
+def season_values(bridge: Bridge, person: str) -> dict:
+    """The confirmed season numbers by code ({} when FM has no row)."""
+    try:
+        row = bridge.query(person, ["0HgJ"]).get("0HgJ")
+    except BridgeUnavailable:
+        return {}
+    props = (row or {}).get("props") or {} if isinstance(row, dict) else {}
+    return {c: props[c] for c in SEASON if isinstance(props.get(c), (int, float)) and not isinstance(props.get(c), bool)}
+
+
 def season(bridge: Bridge, person: str) -> str:
     """'本赛季（联赛）：出场 7，进球 0，……' or '' when FM has no row."""
     try:

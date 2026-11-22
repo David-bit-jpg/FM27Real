@@ -109,6 +109,21 @@
   .pic .tn { margin-top: 6px; font-weight: 650; font-size: 13px; }
   .pic .mid { text-align: center; } .pic .sc { font-size: 34px; font-weight: 800; letter-spacing: 2px; }
   .pic .cp { color: #c9d4f0; font-size: 11px; margin-top: 4px; }
+  .pic.gfx { position: relative; overflow: hidden; padding: 18px 16px; min-height: 170px; }
+  .pic .tag { display: inline-block; font-size: 11px; letter-spacing: .12em; font-weight: 700; color: #ffd0e4; text-transform: uppercase; }
+  .pic.result { text-align: center; } .pic.result .row3 { display: flex; align-items: center; justify-content: space-around; margin: 10px 0 6px; }
+  .pic.result .sc { font-size: 38px; font-weight: 800; letter-spacing: 2px; }
+  .pic .scorers { color: #e6ecff; font-size: 12px; margin: 4px 0; }
+  .pic.motm, .pic.stat { display: flex; align-items: center; gap: 14px; }
+  .pic .txt { flex: 1; z-index: 1; } .pic .big { font-size: 18px; font-weight: 750; margin-top: 4px; }
+  .pic .num { font-size: 46px; font-weight: 850; line-height: 1.05; color: #fff; text-shadow: 0 2px 12px #0008; }
+  .pic .chips { color: #c9d4f0; font-size: 12px; margin-top: 4px; }
+  .pic .ring { width: 104px; height: 104px; border-radius: 50%; overflow: hidden; flex: none; z-index: 1;
+               background: radial-gradient(circle at 50% 35%, #ffffff33, #ffffff08); border: 3px solid #ffffff55; }
+  .pic .mface { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+  .pic .wm { position: absolute; right: -18px; bottom: -18px; width: 120px; height: 120px; opacity: .12; object-fit: contain; }
+  .pic.quote .qmark { font-size: 60px; line-height: .6; color: #ff7fb3; } .pic.quote .qt { font-size: 17px; font-weight: 650; margin: 6px 0 10px; z-index: 1; position: relative; }
+  .pic.quote .by { color: #c9d4f0; font-size: 12px; }
   .pic.portrait { display: flex; justify-content: center; align-items: flex-end; height: 220px; }
   .pic .face { height: 210px; } .pic .biglogo { height: 150px; margin: auto; object-fit: contain; }
   .post .act { display: flex; gap: 16px; padding: 8px 11px 0; color: var(--muted); font-size: 13px; }
@@ -159,7 +174,7 @@
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
   zh: { phone: "主教练手机", messages: "消息", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
-        refreshing: "大家正在发帖…", answersLater: "已发出。回复会在之后几个小时里陆续出现。", allComments: "查看全部 N 条评论",
+        refreshing: "大家正在发帖…", answersLater: "已发出。回复会在之后几个小时里陆续出现。", fullTime: "全场结束", motm: "全场最佳", apps: "出场", allComments: "查看全部 N 条评论",
         notifications: "通知", repliedYou: "回复了你", mentionedYou: "提到了你", fanMood: "球迷对你的情绪", noPosts: "还没有帖子。比赛和新闻之后大家会在这里发帖。", sending: "发送中…", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
         pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
         potm: "全场最佳", scorers: "进球", showAll: "显示全部收件箱", showImportant: "只看重要的", results: { "赢了": "胜", "输了": "负", "打平": "平" }, settings: "设置", recent: "最近聊天", squad: "一线队",
@@ -172,7 +187,7 @@ const T = {
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
   en: { phone: "Manager's phone", messages: "Messages", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
-        refreshing: "People are posting…", answersLater: "Sent. Answers will come in over the next few hours.", allComments: "View all N comments",
+        refreshing: "People are posting…", answersLater: "Sent. Answers will come in over the next few hours.", fullTime: "Full time", motm: "Player of the match", apps: "Apps", allComments: "View all N comments",
         notifications: "Notifications", repliedYou: "replied to you", mentionedYou: "mentioned you", fanMood: "Supporters' mood", noPosts: "No posts yet. People post here after matches and news.", sending: "Sending…", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
         pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
         potm: "Player of the match", scorers: "Goals", showAll: "Show whole inbox", showImportant: "Important only", results: { "赢了": "W", "输了": "L", "打平": "D" }, settings: "Settings", recent: "Recent", squad: "First team",
@@ -393,11 +408,32 @@ function authorAvatar(a) {
 }
 function picture(p) {
   if (!p) return null;
+  const faceImg = (uid, cls) => { if (!uid) return null; const i = el("img", { class: cls, src: `/face/${uid}?${tok()}`, alt: "" }); i.onerror = () => i.remove(); return i; };
+  if (p.type === "result") return el("div", { class: "pic gfx result" },
+    el("div", { class: "tag" }, t("fullTime")),
+    el("div", { class: "row3" },
+      el("div", { class: "side" }, logoImg(p.home.club_uid, "crest"), el("div", { class: "tn" }, p.home.name)),
+      el("div", { class: "sc" }, `${p.score[0]} - ${p.score[1]}`),
+      el("div", { class: "side" }, logoImg(p.away.club_uid, "crest"), el("div", { class: "tn" }, p.away.name))),
+    (p.scorers || []).length ? el("div", { class: "scorers" }, "⚽ " + p.scorers.join(" · ")) : null,
+    el("div", { class: "cp" }, `${p.competition || ""} · ${p.date || ""}`));
+  if (p.type === "motm") return el("div", { class: "pic gfx motm" },
+    el("div", { class: "txt" }, el("div", { class: "tag" }, t("motm")), el("div", { class: "big" }, p.name),
+      el("div", { class: "num" }, String(p.rating)),
+      el("div", { class: "chips" }, p.goals ? `⚽ ${p.goals}` : "", p.assists ? `  🅰 ${p.assists}` : "", `  ${p.competition || ""}`)),
+    el("div", { class: "ring" }, faceImg(p.uid, "mface")), logoImg(p.club_uid, "wm"));
+  if (p.type === "stat") return el("div", { class: "pic gfx stat" },
+    el("div", { class: "ring" }, faceImg(p.uid, "mface")),
+    el("div", { class: "txt" }, el("div", { class: "num" }, String(p.number)), el("div", { class: "tag" }, p.label),
+      el("div", { class: "big" }, p.name), p.apps ? el("div", { class: "chips" }, `${t("apps")} ${p.apps}`) : null),
+    logoImg(p.club_uid, "wm"));
+  if (p.type === "quote") return el("div", { class: "pic gfx quote" },
+    el("div", { class: "qmark" }, "“"), el("div", { class: "qt" }, p.text), el("div", { class: "by" }, "— " + p.by), logoImg(p.club_uid, "wm"));
   if (p.type === "match") return el("div", { class: "pic match" },
     el("div", { class: "side" }, logoImg(p.home.club_uid, "crest"), el("div", { class: "tn" }, p.home.name)),
     el("div", { class: "mid" }, el("div", { class: "sc" }, `${p.score[0]} - ${p.score[1]}`), el("div", { class: "cp" }, `${p.competition || ""} · ${p.date || ""}`)),
     el("div", { class: "side" }, logoImg(p.away.club_uid, "crest"), el("div", { class: "tn" }, p.away.name)));
-  if (p.type === "face") { const i = el("img", { class: "face", src: `/face/${p.uid}?${tok()}`, alt: "" }); i.onerror = () => i.remove(); return el("div", { class: "pic portrait" }, i); }
+  if (p.type === "face") return null;  // no raw headshots as post pictures (avatars only)
   if (p.type === "logo" && p.club_uid) return el("div", { class: "pic portrait" }, logoImg(p.club_uid, "biglogo"));
   return null;
 }

@@ -38,6 +38,7 @@ from .story import StoryEngine
 from .press import PressRoom
 from .contacts import ContactEngine
 from .social import SocialFeed
+from .squad import Roster
 from . import graphics
 
 PORT = 27271
@@ -107,8 +108,9 @@ class Engine:
         self.native = NativeSync(self.bridge)
         self.story = StoryEngine(self.bridge)
         self.press = PressRoom(self.bridge, self.native)
-        self.contacts = ContactEngine(self.story)
-        self.social = SocialFeed(self.story)
+        self.roster = Roster(self.bridge)
+        self.contacts = ContactEngine(self.story, self.roster)
+        self.social = SocialFeed(self.story, self.roster)
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
