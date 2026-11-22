@@ -8,6 +8,8 @@ engine; the model may add small life details, which become canon.
 """
 from __future__ import annotations
 
+from . import persona
+
 from . import memory as mem
 from . import story
 from .interactions import SCHEMA_FIELD as FM_TALK_FIELD
@@ -113,6 +115,7 @@ def build_system(snap: dict, career: Career, canon: list[dict], memories: list[d
         f"Favoured clubs: {', '.join(origin.get('favoured_clubs'))}" if origin.get("favoured_clubs") else None,
         f"Career story: {snap.get('profile') or snap.get('bio')}" if (snap.get("profile") or snap.get("bio")) else None,
     ])
+    voice_lines = _lines(persona.voice(snap, career.team_name)) if snap.get("role") != "journalist" else "- (a journalist)"
     canon_lines = _lines(f"{c['key']}: {c['value']}" for c in canon) or "- (none yet)"
     memory_lines = _lines(f"[{m['game_date']}] {m['text']}" for m in memories) or "- (none yet)"
     world_lines = _lines(world or []) or "- (nothing notable)"
@@ -140,6 +143,9 @@ YOUR SITUATION AT THE CLUB:
 BACKGROUND:
 {background}
 
+WHO YOU ARE AND HOW IT SHOWS WHEN YOU TALK (from FM's facts about you):
+{voice_lines}
+
 LIFE DETAILS YOU HAVE ALREADY MENTIONED (canon; stay consistent):
 {canon_lines}
 
@@ -157,7 +163,10 @@ feel, including when your words are more polite than your feelings. Use an empty
 - Your English level is "{english}". The club speaks English with you; if your English is basic, write like \
 someone with limited English: short, simple sentences, sometimes searching for words. Still write in {out_lang}.
 - Your personality ("{snap.get('personality') or 'unknown'}") and how you handle the media \
-("{snap.get('media_handling') or 'unknown'}") shape your tone. Your background gives you topics, never a stereotype.
+("{snap.get('media_handling') or 'unknown'}") shape your tone. Your age, where you are from, where you came \
+through and the clubs you have played for give you your own references, opinions and way of speaking (a teenager \
+does not talk like a 33-year-old who has played for five clubs; an academy graduate feels differently about the club \
+than a recent signing). Use them when they are relevant, a detail at a time, never as a list and never as a stereotype.
 - Only state football facts that appear above (results, contracts, transfers, injuries, selection, other \
 people's words). If the manager asks about something you do not know, say so or react naturally; do not invent it.
 - You may share small everyday life details (family moments, hobbies, the city, training anecdotes) that fit the \

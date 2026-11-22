@@ -23,7 +23,7 @@ import random
 import threading
 from datetime import date as Date, datetime, timedelta
 
-from . import story
+from . import persona, snapshot, story
 from .bridge import BridgeUnavailable, _text
 from .career import Career
 from .model import ModelError, Provider
@@ -84,7 +84,11 @@ RULES = """Write in Simplified Chinese, like real Instagram: short, informal, em
 be the real players listed, writing in first person about themselves. People sometimes @mention the manager \
 (write "@{manager}" in the text and set mentions_manager). Facts (results, scores, scorers, ratings, stats, \
 injuries, quotes) must appear in the context; never invent them. Judge players by their position (no blaming \
-defenders or defensive midfielders for not scoring). likes: fans 0-500, players and pundits 2000-80000, the club \
+defenders or defensive midfielders for not scoring). Each player sounds like himself, from WHO OUR PLAYERS ARE: \
+a teenager writes differently from a veteran; a foreign player may slip in his own language or mention home; an \
+academy graduate talks about the club like family; former clubs, old teammates and national teams come up when \
+relevant; a reserved player writes little, an outspoken one stirs things. Fans and pundits know the players' \
+backgrounds too (an ex-rival's player, the local lad, the expensive signing). likes: fans 0-500, players and pundits 2000-80000, the club \
 10000-150000."""
 
 
@@ -344,6 +348,16 @@ class SocialFeed:
                         + "\n".join(f"- {x}" for x in before))
         return ""
 
+    def _who(self, career: Career, players: dict[str, dict]) -> str:
+        out = []
+        for name, p in players.items():
+            try:
+                snap = snapshot.get(self.bridge, career, p["ref"])
+                out.append(f"- {persona.brief(snap, career.team_name)} — voice: {persona.cues(snap)}")
+            except Exception:
+                out.append(f"- {name}: {p.get('position') or ''}")
+        return "\n".join(out)
+
     def _context(self, career: Career, players: dict[str, dict]) -> str:
         mine = [f"「{c['text']}」" for p in self._all(career, 60) for c in p.get("comments") or []
                 if c["author"]["kind"] == "manager"][:5]
@@ -351,7 +365,7 @@ class SocialFeed:
                 f"Today: {career.date}.\n"
                 f"Supporters' mood toward the manager (-10 furious .. 10 adoring): {self.fan_mood(career)}\n"
                 "Recent results and news:\n" + "\n".join(f"- {x}" for x in story.recent_world(career)) +
-                "\nOur real first-team players (only these may post as players): " + "、".join(players) +
+                "\nWHO OUR PLAYERS ARE (the only ones who may post as players):\n" + self._who(career, players) +
                 ("\nWhat the manager wrote on social media lately:\n" + "\n".join(f"- {x}" for x in mine) if mine else ""))
 
     # --- FM's own posts ---------------------------------------------------------------
@@ -507,7 +521,8 @@ class SocialFeed:
                   f"club insider's notes: a player scoring a hat-trick in the training scrimmage, someone beating a "
                   f"team-mate at table tennis or FIFA, a fantasy-football boast, a lost bet, a birthday cake, a rondo "
                   f"nutmeg, the kit man's prank. Use only real players listed, mostly ones in the same social circle "
-                  f"together; keep them plausible for their positions (a keeper saves penalties, a striker scores) and "
+                  f"together, and let who they are show (the teenagers' FIFA rivalry, a veteran's dry joke, two team-mates from the \
+same country, the perfectionist sulking over a lost rondo); keep them plausible for their positions (a keeper saves penalties, a striker scores) and "
                   f"never about results, injuries or transfers. One short sentence each, in Simplified Chinese.")
         try:
             out = model.complete(system, prompt, LIFE_SCHEMA)
@@ -542,20 +557,18 @@ class SocialFeed:
         me = players[name]
         circle = [n for n, p in players.items() if n != name and p.get("group") is not None and p["group"] == me.get("group")]
         friend = random.choice(circle) if circle and random.random() < 0.6 else None
-        snap_lines = []
         try:
-            origin = self.bridge.person_origin(me["ref"])
-            snap_lines.append(f"From {origin.get('birth_city') or ''} {origin.get('birth_region') or ''}".strip())
+            snap_lines = persona.lines(snapshot.get(self.bridge, career, me["ref"]), career.team_name)
         except Exception:
-            pass
+            snap_lines = []
         canon = career.store.canon(me["ref"])
         memories = [m["text"] for m in career.store.memories(me["ref"])[-4:]]
         topic = (f"a moment with his teammate {friend} (a meal out, coffee, gaming, a day off, a birthday...); "
                  f"{friend} comments too (kind player)") if friend else \
-            "his everyday life or training (food, family, a pet, the city, recovery, a hobby)"
+            "his everyday life or training (food, family, a pet, the city, recovery, a hobby, home, an old club or team-mate, his national team), as fits who he is"
         system = (f"You write one Instagram post by {name}, a player at {career.team_name}, about {topic}. Not about a "
                   f"match result. Most such posts have no graphic (picture 'none'). 3 to 6 comments. His voice is his "
-                  f"own: let his origin, habits and personality show; never a template. "
+                  f"own: let his age, origin, career path, habits and personality show; never a template. "
                   f"{RULES.replace('{manager}', career.manager_name)}")
         prompt = (f"{self._context(career, players)}\n\nAbout {name} ({me.get('position')}):\n" +
                   "\n".join(f"- {x}" for x in snap_lines) + "\n" +

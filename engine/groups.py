@@ -15,6 +15,7 @@ import itertools
 import time
 
 from . import memory as mem
+from . import persona
 from . import snapshot, story
 from .bridge import Bridge
 from .career import Career
@@ -73,13 +74,11 @@ class Groups:
 
     def _persona(self, career: Career, ref: str) -> str:
         snap = snapshot.get(self.bridge, career, ref)
-        origin = snap.get("origin") or {}
         rel = career.store.relation(ref)
         recent = [m["text"] for m in mem.recall(career.store.memories(ref), career.date, n=4)]
-        return (f"{snap.get('name')}: {snap.get('position') or ''}, age {snap.get('age')}, from "
-                f"{origin.get('birth_city') or origin.get('birth_region') or snap.get('nationality') or '?'}; "
-                f"personality {snap.get('personality') or '?'}; English {_english_level(snap.get('languages', ''))}; "
-                f"standing {(snap.get('social') or {}).get('influence') or snap.get('squad_status') or '?'}; "
+        voice = persona.cues(snap)
+        return (f"{persona.brief(snap, career.team_name)}; English {_english_level(snap.get('languages', ''))}; "
+                f"voice: {voice}; "
                 f"feelings toward the manager trust {rel['trust']:+d} liking {rel['liking']:+d}; "
                 f"remembers: {' / '.join(recent) or 'nothing special'}")
 
@@ -101,8 +100,10 @@ RECENT AT THE CLUB:
 {chr(10).join('- ' + x for x in story.recent_world(career))}
 Decide who answers the manager's new message. Not everyone answers: usually one to three people, those it concerns \
 or who like to talk; some only send an emoji or a sticker-like reply; the shy or the unhappy may stay silent. Each \
-writes in his own voice (origin, English level, personality, how he feels about the manager); players may also \
-banter with each other. Write in {out_lang}, short like a real group chat. Only football facts from above; never \
+writes in his own voice: his age (teenagers use slang and emoji, veterans are dry and measured), where he is from, \
+his English level, personality and media style, his standing (leaders speak first and for the group), the clubs \
+he has played for (old clubs and teammates come up when relevant) and how he feels about the manager; players may \
+also banter with each other. Write in {out_lang}, short like a real group chat. Only football facts from above; never \
 invent results, injuries or transfers."""
         prompt = f"Group chat so far:\n{transcript}\n\nNew message from {career.manager_name}:\n{text}"
         result = model.complete(system, prompt, SCHEMA)

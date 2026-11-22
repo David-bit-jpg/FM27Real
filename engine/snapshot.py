@@ -26,6 +26,12 @@ def build(bridge: Bridge, person_id: str) -> dict:
             snap["season"] = season(bridge, person_id)
         except Exception:
             pass
+    try:  # clubs named in his career story (played for, loaned to, or faced), resolved once a day
+        raw = bridge.query(person_id, ["dkwi"]).get("dkwi") or {}
+        links = list(dict.fromkeys(l for l in (raw.get("links") or []) if isinstance(l, str) and l.startswith("18")))
+        snap["career_clubs"] = [{"id": l, "name": bridge.name(l)} for l in links[:12]]
+    except Exception:
+        pass
     team_id = snap.get("team")
     if isinstance(team_id, str):
         snap["team_name"] = bridge.name(team_id)
