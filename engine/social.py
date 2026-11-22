@@ -278,9 +278,19 @@ class SocialFeed:
                         (kind == "news" and ((p.get("weight") or 1) < 1.5 or p.get("origin") in ("social", "media"))):
                     continue
                 out.append({"key": key, "kind": kind, "date": e["game_date"], "payload": p})
-        transfer = [x for x in out if x["kind"] == "news" and x["payload"].get("origin") in ("rumour", "transfer")]
-        for x in sorted(transfer, key=lambda x: -(x["payload"].get("weight") or 1))[2:]:  # two transfer stories a day
+        # At most two transfer stories a game day; the rest are skipped for good (never retried).
+        is_transfer = lambda key: str(key).startswith(("news:rumour:", "news:interest:"))
+        done_today = {e["payload"].get("source") for e in career.store.events("social_post_none", limit=500)
+                      if e["game_date"] == career.date and is_transfer((e["payload"] or {}).get("source"))
+                      and not (e["payload"] or {}).get("skipped")}
+        done_today |= {p.get("source") for p in self._all(career, 300)
+                       if p.get("date", "")[:10] == career.date and is_transfer(p.get("source"))}
+        allowed = max(0, 2 - len(done_today))
+        transfer = sorted([x for x in out if x["kind"] == "news" and is_transfer(x["key"])],
+                          key=lambda x: -(x["payload"].get("weight") or 1))
+        for x in transfer[allowed:]:
             out.remove(x)
+            career.store.add_event("social_post_none", career.date, {"source": x["key"], "skipped": True})
         out.sort(key=lambda x: x["date"] or "", reverse=True)
         return out
 

@@ -360,12 +360,15 @@ async function showHome() {
 
 // --- feed ----------------------------------------------------------------------
 let feedAll = false;
-async function showFeed() {
+async function showFeed(skipRefresh) {
+  if (skipRefresh instanceof Event) skipRefresh = false;  // called as a click handler
+  const again = view === "feed" && $("main").querySelector(".feed");
   view = "feed"; current = null; setHeader(t("feed"), false);
-  const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("loading")));
+  const main = $("main");
+  if (!again) main.replaceChildren(el("div", { class: "empty" }, t("loading")));  // a refresh keeps what is shown
   let data;
   try { data = await api("/api/feed" + (feedAll ? "?all=1" : "")); banner(""); }
-  catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
+  catch (e) { if (!again) main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
   if (view !== "feed") return;
   const who = (id, name) => fmLink(id, name), people = data.people || [];
   const card = it => {
@@ -390,11 +393,11 @@ async function showFeed() {
       (it.people || []).length ? el("div", { class: "chips" }, it.people.map((p, i) => [i ? " · " : "", who(p.id, p.name)])) : null);
   };
   main.replaceChildren(el("div", { class: "feed" },
-    el("div", { class: "filter" }, el("button", { onclick: () => { feedAll = !feedAll; showFeed(); } }, feedAll ? t("showImportant") : t("showAll"))),
+    el("div", { class: "filter" }, el("button", { onclick: () => { feedAll = !feedAll; showFeed(true); } }, feedAll ? t("showImportant") : t("showAll"))),
     data.items.length ? data.items.map(card) : el("div", { class: "empty" }, t("noFeed"))));
-  if (!showFeed.refreshing) {  // today's training-ground notes and media are written when someone looks
+  if (!skipRefresh && !showFeed.refreshing) {  // today's notes and media are written when someone looks: once per visit
     showFeed.refreshing = true;
-    try { const s = await api("/api/social"); if (s.pending) { await api("/api/social/refresh", {}); if (view === "feed") showFeed(); } }
+    try { const s = await api("/api/social"); if (s.pending) { await api("/api/social/refresh", {}); if (view === "feed") showFeed(true); } }
     catch (e) {} finally { showFeed.refreshing = false; }
   }
 }
