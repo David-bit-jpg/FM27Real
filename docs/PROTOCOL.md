@@ -132,3 +132,17 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
   `2nyA`/`rbpf` tackles won / %, `V8eK` fouls per 90. Not reliable: `1xSW`, `cgr `, `2FCz`.
 - Last-five rows (XkGV): `oGvo` goals, `sAaO` assists, `WOVM` xG, `l75x` goals conceded, `e9UE` saves,
   `AB5g` rating, `RuDI`/`tOWU` minute subbed off/on.
+
+## In-Game Editor (2026-11-21; needs the paid IGE add-on, never bypassed)
+
+- Gate: InGameEditorRequirement checks config (owned), game (enabled for this save) and setting flags.
+- Team morale: event 44 to the game record (target `03 ' 011'=1 …`), data record {aetT team, aCPN, muhH human
+  manager, ferd team, Lerd [team], ulav value}. Setting 18 made every player's morale (person `aroM`) 18.
+- Editor tree: root per record (type 42, pairs crBD = record, dise), fields are type 43 targets with a path
+  (pairs 0,1,2,… = section/field indexes). Field props: `eman` label, `lvtp` value, `tnih` hint, `slif`/`sces`
+  children, `T4di` options. Edits are UpdateChannelData on the field's `lvtp` (e.g. reputation int16 7000; a
+  favoured person's reason {6Jvq "主教练", lvtp 6}).
+- DANGER: opening editor targets through our own query channels crashes the game (2026-11-21, twice). Editor
+  objects may only be opened by the editor panel itself. Map fields passively from tap.log while the user
+  browses the editor; never query type 42/43 targets.
+- Person morale: `aroM` (0-20 scale as seen).
