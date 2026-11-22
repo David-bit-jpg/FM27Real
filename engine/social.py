@@ -64,6 +64,12 @@ MEDIA_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["s
                                    "people": {"type": "array", "items": {"type": "string"},
                                               "description": "exact names of our players the story is about"},
                                    "likes": {"type": "integer"}, "comments": {"type": "array", "items": PERSON}}}}}}
+LIFE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"], "properties": {"items": {
+    "type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["text", "people", "kind"],
+                               "properties": {"text": {"type": "string"},
+                                              "people": {"type": "array", "items": {"type": "string"}},
+                                              "kind": {"type": "string", "enum": ["training", "leisure", "banter",
+                                                                                  "fantasy", "other"]}}}}}}
 REPLY_SCHEMA = {"type": "object", "additionalProperties": False,
                 "required": ["replies", "uproar", "fan_mood_delta", "headline"],
                 "properties": {"replies": {"type": "array", "items": PERSON},
@@ -249,6 +255,8 @@ class SocialFeed:
             key = f"pressconf:{day}"
             if key not in done:
                 out.append({"key": key, "kind": "press_conference", "date": day, "payload": {"answers": answers}})
+        if f"squadlife:{career.date}" not in done:
+            out.append({"key": f"squadlife:{career.date}", "kind": "squad_life", "date": career.date, "payload": {}})
         if f"media:{career.date}" not in done:
             out.append({"key": f"media:{career.date}", "kind": "media_day", "date": career.date, "payload": {}})
         for kind in ("upcoming", "match", "news"):
@@ -281,6 +289,8 @@ class SocialFeed:
             return f"Press conference {ev['date']}, the manager's answers:\n{qa}"
         if ev["kind"] == "media_day":
             return f"Football media day {ev['date']}"
+        if ev["kind"] == "squad_life":
+            return f"A day at the training ground {ev['date']}"
         if ev["kind"] == "upcoming":
             line = (f"Upcoming match {p.get('date')} {p.get('time')}: {p.get('competition')} {p.get('home_name')} vs "
                     f"{p.get('away_name')} (the manager's team plays {'at home' if p.get('we_home') else 'away'}).")
@@ -303,7 +313,7 @@ class SocialFeed:
 
     def _extra(self, career: Career, ev: dict) -> str:
         """Form before a match; fans' predictions and bets after it; the dressing room for media days."""
-        if ev["kind"] == "media_day":
+        if ev["kind"] in ("media_day", "squad_life"):
             players = self.roster.at_club(career)
             groups: dict = {}
             for p in players:
@@ -419,6 +429,9 @@ class SocialFeed:
                 if ev["kind"] == "media_day":
                     added += self._media_day(career, model, players, ev, prompt, now)
                     continue
+                if ev["kind"] == "squad_life":
+                    added += self._squad_life(career, model, players, ev, prompt)
+                    continue
                 try:
                     out = model.complete(system, prompt, EVENT_SCHEMA)
                 except ModelError:
@@ -476,6 +489,7 @@ class SocialFeed:
                 style = s.get("style")
                 career.store.add_event("news", career.date, {
                     "id": None, "title": headline, "body": text, "people": refs, "origin": "media", "style": style,
+                    "names": {players[nm]["ref"]: nm for nm in s.get("people") or [] if nm in players},
                     "outlet": built["author"]["name"], "weight": 1.2 if style == "report" else 1.0},
                     event_key=f"news:media:{career.date}:{i}")
                 for ref in refs:
@@ -484,6 +498,36 @@ class SocialFeed:
                                             "media", 1.3 if style != "report" else 1.0, "news", f"media:{career.date}:{i}")
         if not n:
             career.store.add_event("social_post_none", career.date, {"source": ev["key"]})
+        return n
+
+    def _squad_life(self, career: Career, model: Provider, players: dict[str, dict], ev: dict, prompt: str) -> int:
+        """Small things from the training ground today: scrimmage hat-tricks, table tennis, fantasy football boasts.
+        Each goes to the feed and into the memories of the players involved (who may post about it later)."""
+        system = (f"You write 3 to 5 small, light happenings from {career.team_name}'s training ground today, like a "
+                  f"club insider's notes: a player scoring a hat-trick in the training scrimmage, someone beating a "
+                  f"team-mate at table tennis or FIFA, a fantasy-football boast, a lost bet, a birthday cake, a rondo "
+                  f"nutmeg, the kit man's prank. Use only real players listed, mostly ones in the same social circle "
+                  f"together; keep them plausible for their positions (a keeper saves penalties, a striker scores) and "
+                  f"never about results, injuries or transfers. One short sentence each, in Simplified Chinese.")
+        try:
+            out = model.complete(system, prompt, LIFE_SCHEMA)
+        except ModelError:
+            return 0
+        n = 0
+        for i, item in enumerate(out.get("items") or []):
+            text = str(item.get("text") or "").strip()[:200]
+            refs = [players[nm]["ref"] for nm in item.get("people") or [] if nm in players]
+            if not text or not refs:
+                continue
+            if career.store.add_event("squad_life", career.date, {
+                    "text": text, "people": refs, "names": {players[nm]["ref"]: nm for nm in item.get("people") or []
+                                                           if nm in players}, "kind": item.get("kind")},
+                    event_key=f"squadlife:{career.date}:{i}"):
+                n += 1
+                for ref in refs:
+                    career.store.add_memory(ref, f"训练场趣事：{text}", career.date, "squad_life", 0.8, "life",
+                                            f"squadlife:{career.date}:{i}")
+        career.store.add_event("social_post_none", career.date, {"source": ev["key"]})  # done for today
         return n
 
     def _life_post(self, career: Career, model: Provider, players: dict[str, dict], now: str) -> int:

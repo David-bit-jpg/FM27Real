@@ -367,12 +367,19 @@ def make_handler(engine: Engine):
             """Recent club results and news, newest first (routine inbox items only with ?all=1)."""
             career = engine.careers.current()
             items = []
+            roster_names = {p["id"]: p["name"] for p in engine.roster.players(career)}
+            for e in career.store.events("squad_life", limit=40):
+                p = e["payload"] or {}
+                names = p.get("names") or {}
+                items.append({"kind": "life", "date": e["game_date"], "weight": 0.8, "text": p.get("text"),
+                              "people": [{"id": r, "name": names.get(r) or roster_names.get(r) or r}
+                                         for r in p.get("people") or []]})
             for e in career.store.events("press_answer", limit=60):
                 p = e["payload"] or {}
-                if not p.get("headline"):
-                    continue
                 j = p.get("journalist") or {}
-                items.append({"kind": "news", "date": e["game_date"], "weight": 1.5, "title": p["headline"],
+                answer = str(p.get("answer") or "")
+                items.append({"kind": "news", "date": e["game_date"], "weight": 1.5,
+                              "title": p.get("headline") or f"发布会上，主教练回应{j.get('outlet', '媒体')}：「{answer[:30]}{'…' if len(answer) > 30 else ''}」",
                               "body": f"{j.get('outlet', '')} {j.get('name', '')}：{p.get('question')}\n主教练：{p.get('answer')}",
                               "people": [{"id": j["id"], "name": j.get("name")}] if j.get("id") else []})
             for e in career.store.events("match", limit=40) + career.store.events("news", limit=200):
@@ -385,7 +392,8 @@ def make_handler(engine: Engine):
                                                    "goals", "player_of_match", "player_of_match_name")}
                 else:
                     names = p.get("names") or {}
-                    people = [{"id": r, "name": names.get(r) or r} for r in (p.get("people") or [])[:6]]
+                    people = [{"id": r, "name": names.get(r) or roster_names.get(r) or engine.story.name(r)}
+                              for r in (p.get("people") or [])[:6]]
                     item |= {"title": p.get("title"), "body": p.get("body"), "people": people}
                 items.append(item)
             items.sort(key=lambda i: (i["date"] or "", i["kind"] == "match"), reverse=True)

@@ -150,6 +150,7 @@
   .score { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
   .score .team { flex: 1; } .score .team.r { text-align: right; }
   .score .num { font-size: 18px; padding: 0 6px; }
+  .card.life { border-left: 3px solid #59a6ff; } .card .lifetext { font-size: 13px; }
   .card.win { border-left: 3px solid var(--good); } .card.loss { border-left: 3px solid var(--bad); } .card.draw { border-left: 3px solid var(--warn); }
   .link { color: #9fc0ff; cursor: pointer; } .link:hover { text-decoration: underline; }
   .chips { margin-top: 6px; font-size: 12px; color: var(--muted); }
@@ -175,7 +176,7 @@
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
-  zh: { phone: "主教练手机", messages: "消息", groups: "群聊", newGroup: "＋ 新建群聊", groupName: "群名（可不填）", create: "创建",
+  zh: { phone: "主教练手机", messages: "消息", trainingGround: "🏟 训练场", groups: "群聊", newGroup: "＋ 新建群聊", groupName: "群名（可不填）", create: "创建",
         pickMembers: "选择成员", groupTyping: "群里有人在输入…", groupsUnavailable: "群聊暂时不可用：请重启引擎（scripts/restart-engine.sh）", refresh: "刷新", me: "我",
         gameEdits: "修改游戏数据（游戏内编辑器）", gameEditsHint: "世界里发生的事会通过 FM 自己的编辑器小幅改动游戏数据（声望、隐藏属性）。每推进一次游戏时间最多改一项，编辑器会短暂弹出。需要已购买游戏内编辑器。",
         on: "开", off: "关", editLog: "修改记录", noEdits: "还没有修改。", testEdit: "测试：下次推进时把我的声望 +1", talkLog: "后台原版谈话", noTalks: "还没有后台谈话。私聊、群聊、发布会里表扬或批评球员后，下次推进时会在后台进行。", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
@@ -191,7 +192,7 @@ const T = {
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
-  en: { phone: "Manager's phone", messages: "Messages", groups: "Group chats", newGroup: "+ New group", groupName: "Group name (optional)", create: "Create",
+  en: { phone: "Manager's phone", messages: "Messages", trainingGround: "🏟 Training ground", groups: "Group chats", newGroup: "+ New group", groupName: "Group name (optional)", create: "Create",
         pickMembers: "Pick members", groupTyping: "Someone is typing…", groupsUnavailable: "Group chats unavailable: restart the engine (scripts/restart-engine.sh)", refresh: "Refresh", me: "Me",
         gameEdits: "Change game data (In-Game Editor)", gameEditsHint: "What happens in the world makes small changes to FM's data (reputation, hidden attributes) through FM's own editor. At most one change each time the game advances; the editor shows briefly. Needs the In-Game Editor.",
         on: "On", off: "Off", editLog: "Change log", noEdits: "No changes yet.", testEdit: "Test: +1 to my reputation on the next advance", talkLog: "Background FM conversations", noTalks: "None yet. Praise or criticise a player in a chat, group or press conference; it happens on the next advance.", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
@@ -332,6 +333,10 @@ async function showFeed() {
         goals.length ? el("div", { class: "chips" }, `${t("scorers")}：`, goals.map((g, i) => i ? ["，", g] : g)) : null,
         it.player_of_match ? el("div", { class: "chips" }, `${t("potm")}：`, who(it.player_of_match, it.player_of_match_name)) : null);
     }
+    if (it.kind === "life")
+      return el("div", { class: "card life" }, el("div", { class: "meta" }, `${it.date} · ${t("trainingGround")}`),
+        el("div", { class: "lifetext" }, it.text),
+        (it.people || []).length ? el("div", { class: "chips" }, it.people.map((p, i) => [i ? " · " : "", who(p.id, p.name)])) : null);
     const body = el("div", { class: "body" }, it.body || "");
     body.onclick = () => body.classList.toggle("open");
     return el("div", { class: "card" }, el("div", { class: "meta" }, it.date),
@@ -341,6 +346,11 @@ async function showFeed() {
   main.replaceChildren(el("div", { class: "feed" },
     el("div", { class: "filter" }, el("button", { onclick: () => { feedAll = !feedAll; showFeed(); } }, feedAll ? t("showImportant") : t("showAll"))),
     data.items.length ? data.items.map(card) : el("div", { class: "empty" }, t("noFeed"))));
+  if (!showFeed.refreshing) {  // today's training-ground notes and media are written when someone looks
+    showFeed.refreshing = true;
+    try { const s = await api("/api/social"); if (s.pending) { await api("/api/social/refresh", {}); if (view === "feed") showFeed(); } }
+    catch (e) {} finally { showFeed.refreshing = false; }
+  }
 }
 
 // --- press conference ------------------------------------------------------------
