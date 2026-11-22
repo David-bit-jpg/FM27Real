@@ -58,6 +58,8 @@
   .msg.me { align-self: flex-end; background: var(--mine); border-bottom-right-radius: 4px; }
   .msg.them { border-bottom-left-radius: 4px; }
   .day { align-self: center; color: var(--muted); font-size: 11px; margin: 6px 0 2px; }
+  .grow { display: flex; gap: 8px; align-items: flex-end; max-width: 88%; } .grow .avatar { width: 30px; height: 30px; font-size: 12px; }
+  .gname { color: var(--muted); font-size: 11px; margin: 0 0 2px 4px; }
   .typing { color: var(--muted); font-size: 12px; padding: 0 2px; }
   .failed { align-self: flex-end; color: var(--bad); font-size: 12px; }
   .failed button { background: none; border: 0; color: var(--text); text-decoration: underline; padding: 0 4px; }
@@ -173,7 +175,8 @@
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
-  zh: { phone: "主教练手机", messages: "消息", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
+  zh: { phone: "主教练手机", messages: "消息", groups: "群聊", newGroup: "＋ 新建群聊", groupName: "群名（可不填）", create: "创建",
+        pickMembers: "选择成员", groupTyping: "群里有人在输入…", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
         refreshing: "大家正在发帖…", answersLater: "已发出。回复会在之后几个小时里陆续出现。", fullTime: "全场结束", motm: "全场最佳", apps: "出场", matchday: "比赛日", odds: "赔率", homeWin: "主胜", draw: "平", awayWin: "客胜", allComments: "查看全部 N 条评论",
         notifications: "通知", repliedYou: "回复了你", mentionedYou: "提到了你", fanMood: "球迷对你的情绪", noPosts: "还没有帖子。比赛和新闻之后大家会在这里发帖。", sending: "发送中…", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
         pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
@@ -186,7 +189,8 @@ const T = {
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
-  en: { phone: "Manager's phone", messages: "Messages", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
+  en: { phone: "Manager's phone", messages: "Messages", groups: "Group chats", newGroup: "+ New group", groupName: "Group name (optional)", create: "Create",
+        pickMembers: "Pick members", groupTyping: "Someone is typing…", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
         refreshing: "People are posting…", answersLater: "Sent. Answers will come in over the next few hours.", fullTime: "Full time", motm: "Player of the match", apps: "Apps", matchday: "Matchday", odds: "Odds", homeWin: "Home", draw: "Draw", awayWin: "Away", allComments: "View all N comments",
         notifications: "Notifications", repliedYou: "replied to you", mentionedYou: "mentioned you", fanMood: "Supporters' mood", noPosts: "No posts yet. People post here after matches and news.", sending: "Sending…", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
         pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
@@ -286,8 +290,17 @@ async function showHome() {
     return r;
   };
   const fresh = inbox.items.filter(c => c.status === "unread");
+  let groups = { groups: [] };
+  try { groups = await api("/api/groups"); } catch (e) {}
+  const groupRows = [el("div", { class: "section" }, t("groups")),
+    groups.groups.map(g => el("div", { class: "person", onclick: () => openGroup(g.id) },
+      el("div", { class: "avatar av-txt" }, "👥"),
+      el("div", { class: "who" }, el("div", { class: "name" }, g.name), el("div", { class: "sub" }, g.last || g.members.length + " 人")))),
+    el("div", { class: "person", onclick: () => newGroup(groups.players) }, el("div", { class: "avatar av-txt" }, "＋"),
+      el("div", { class: "who" }, el("div", { class: "name" }, t("newGroup"))))];
   main.replaceChildren(...[
     fresh.length ? [el("div", { class: "section" }, t("inbox")), fresh.map(contact)] : [],
+    groupRows,
     el("div", { class: "section" }, t("recent")),
     data.recent.length ? data.recent.map(p => row(p, p.last)) : el("div", { class: "empty" }, t("noRecent")),
     el("div", { class: "section" }, t("squad")),
@@ -508,6 +521,55 @@ function setSocialBadge(n) {
   socialCount = n || 0;
   const tab = $("tab-social"); tab.textContent = t("social");
   if (n) tab.append(el("span", { class: "badge" }, String(n)));
+}
+
+// --- group chats -----------------------------------------------------------------
+function newGroup(players) {
+  view = "chat"; current = null; setHeader(t("newGroup").replace("＋ ", "").replace("+ ", ""), true);
+  const chosen = new Set();
+  const name = el("input", { placeholder: t("groupName") });
+  const rows = players.map(p => {
+    const box = el("input", { type: "checkbox", style: "width:auto" });
+    box.onchange = () => box.checked ? chosen.add(p.id) : chosen.delete(p.id);
+    return el("label", { class: "person" }, box, avatar(p), el("div", { class: "who" }, el("div", { class: "name" }, p.name), el("div", { class: "sub" }, p.position)));
+  });
+  const go = el("button", { class: "btn primary", type: "button", onclick: async () => {
+    if (!chosen.size) return;
+    try { const g = await api("/api/groups", { name: name.value.trim(), members: [...chosen] }); openGroup(g.id); }
+    catch (e) { banner(e.message, true); } } }, t("create"));
+  $("main").replaceChildren(el("div", { class: "settings" }, el("div", { class: "field" }, name),
+    el("div", { class: "section", style: "padding:6px 0" }, t("pickMembers")), ...rows, el("div", { class: "row", style: "margin-top:12px" }, go)));
+}
+async function openGroup(id) {
+  view = "chat"; current = "group:" + id; setHeader("", true);
+  let g;
+  try { g = await api(`/api/groups/${id}`); } catch (e) { $("main").replaceChildren(el("div", { class: "empty" }, e.message)); return; }
+  setHeader(`${g.name} (${g.members.length})`, true);
+  const log = el("div", { class: "log" });
+  let lastDay = null;
+  const add = m => {
+    if (m.game_date && m.game_date !== lastDay) { log.append(el("div", { class: "day" }, m.game_date)); lastDay = m.game_date; }
+    if (m.sender === "manager") return log.append(el("div", { class: "msg me" }, m.text));
+    const who = (m.meta || {}).name || "";
+    log.append(el("div", { class: "grow" }, avatar({ name: who, uid: g.faces[(m.meta || {}).author] }),
+      el("div", {}, el("div", { class: "gname" }, who), el("div", { class: "msg them" }, m.text))));
+  };
+  g.messages.forEach(add);
+  const input = el("input", { placeholder: t("placeholder"), autocomplete: "off" });
+  const btn = el("button", { type: "submit" }, t("send"));
+  const form = el("form", { class: "send" }, input, btn);
+  form.addEventListener("submit", async ev => {
+    ev.preventDefault(); const text = input.value.trim(); if (!text) return;
+    input.value = ""; add({ sender: "manager", text });
+    const typing = el("div", { class: "typing" }, t("groupTyping")); log.append(typing); log.scrollTop = log.scrollHeight;
+    input.disabled = btn.disabled = true;
+    try { const r = await api(`/api/groups/${id}/messages`, { text }); typing.remove();
+      r.replies.forEach(x => add({ sender: "person", text: x.text, meta: { name: x.name, author: x.author } })); }
+    catch (e) { typing.remove(); log.append(el("div", { class: "failed" }, e.message)); }
+    finally { input.disabled = btn.disabled = false; input.focus(); log.scrollTop = log.scrollHeight; }
+  });
+  $("main").replaceChildren(el("div", { class: "chat" }, log, form));
+  log.scrollTop = log.scrollHeight; input.focus();
 }
 
 // --- chat ----------------------------------------------------------------------

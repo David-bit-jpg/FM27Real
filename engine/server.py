@@ -39,6 +39,7 @@ from .press import PressRoom
 from .contacts import ContactEngine
 from .social import SocialFeed
 from .squad import Roster
+from .groups import Groups
 from . import graphics
 
 PORT = 27271
@@ -111,6 +112,7 @@ class Engine:
         self.roster = Roster(self.bridge)
         self.contacts = ContactEngine(self.story, self.roster)
         self.social = SocialFeed(self.story, self.roster)
+        self.groups = Groups(self.bridge)
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
@@ -223,6 +225,36 @@ def make_handler(engine: Engine):
                                                                    body.get("key") or None, text, reply_to))
                     except ModelError as e:
                         return self._json(502, {"error": str(e), "code": "model"})
+                if method == "GET" and path == "/api/groups":
+                    career = engine.careers.current()
+                    return self._json(200, {"groups": engine.groups.list(career),
+                                            "players": [{"id": p["id"], "name": p["name"], "uid": p["uid"],
+                                                         "position": p["position"]} for p in engine.roster.at_club(career)]})
+                if method == "POST" and path == "/api/groups":
+                    body = self._body()
+                    return self._json(200, engine.groups.create(engine.careers.current(), str(body.get("name") or ""),
+                                                                list(body.get("members") or [])))
+                m = re.fullmatch(r"/api/groups/(\d+)", path)
+                if method == "GET" and m:
+                    career = engine.careers.current()
+                    g = engine.groups.get(career, m.group(1))
+                    if not g:
+                        return self._json(404, {"error": "no such group"})
+                    faces = {p["id"]: p["uid"] for p in engine.roster.players(career)}
+                    return self._json(200, g | {"faces": faces, "messages": career.store.messages(f"group:{m.group(1)}")})
+                m = re.fullmatch(r"/api/groups/(\d+)/messages", path)
+                if method == "POST" and m:
+                    text = str(self._body().get("text") or "").strip()[:1000]
+                    model = self._model()
+                    if not text:
+                        return self._json(400, {"error": "text required"})
+                    if model is None:
+                        return self._json(502, {"error": "no model configured", "code": "model"})
+                    try:
+                        return self._json(200, {"replies": engine.groups.send(engine.careers.current(), model, m.group(1),
+                                                                             text, engine.settings["language"])})
+                    except ModelError as e:
+                        return self._json(502, {"error": str(e), "code": "model"})
                 if method == "GET" and path == "/api/inbox":
                     return self._inbox()
                 if method == "POST" and path == "/api/inbox/open":
@@ -285,7 +317,9 @@ def make_handler(engine: Engine):
             recent = []
             journalists = {e["payload"]["id"]: e["payload"] for e in career.store.events("journalist", limit=500)
                            if (e["payload"] or {}).get("id")}
-            for person_id, last in career.store.recent_threads(20):
+            for person_id, last in career.store.recent_threads(40):
+                if person_id.startswith("group:"):
+                    continue
                 j = journalists.get(person_id)
                 p = by_id.get(person_id) or ({"id": person_id, "name": j.get("name") or person_id,
                                               "position": f"记者 · {j.get('outlet')}" if j.get("outlet") else "记者",
