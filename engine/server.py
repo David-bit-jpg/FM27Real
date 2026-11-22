@@ -38,6 +38,7 @@ from .story import StoryEngine
 from .press import PressRoom
 from .contacts import ContactEngine
 from .social import SocialFeed
+from . import graphics
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
@@ -185,15 +186,22 @@ def make_handler(engine: Engine):
                 if method == "GET" and path == "/api/press/active":
                     status = engine.press.status()
                     try:
-                        status["unread"] = sum(1 for c in engine.careers.current().store.events("contact", limit=200)
-                                               if (c["payload"] or {}).get("status") == "unread")
+                        career = engine.careers.current()
+                        status["messages"] = sum(1 for c in career.store.events("contact", limit=200)
+                                                 if (c["payload"] or {}).get("status") == "unread")
+                        status["social"] = len(engine.social.notifications(career))
+                        status["unread"] = status["messages"] + status["social"]
                     except BridgeUnavailable:
                         status["unread"] = 0
                     return self._json(200, status)
                 if method == "GET" and path == "/api/social":
                     career = engine.careers.current()
                     return self._json(200, {"posts": engine.social.posts(career), "fan_mood": engine.social.fan_mood(career),
-                                            "pending": len(engine.social.pending(career))})
+                                            "pending": len(engine.social.pending(career)),
+                                            "notifications": engine.social.notifications(career)})
+                if method == "POST" and path == "/api/social/seen":
+                    engine.social.mark_seen(engine.careers.current())
+                    return self._json(200, {"ok": True})
                 if method == "POST" and path == "/api/social/refresh":
                     model = self._model()
                     if model is None:
@@ -208,8 +216,9 @@ def make_handler(engine: Engine):
                     if model is None:
                         return self._json(502, {"error": "no model configured", "code": "model"})
                     try:
+                        reply_to = body.get("reply_to") if isinstance(body.get("reply_to"), int) else None
                         return self._json(200, engine.social.reply(engine.careers.current(), model,
-                                                                   body.get("key") or None, text))
+                                                                   body.get("key") or None, text, reply_to))
                     except ModelError as e:
                         return self._json(502, {"error": str(e), "code": "model"})
                 if method == "GET" and path == "/api/inbox":
@@ -240,6 +249,12 @@ def make_handler(engine: Engine):
                     return self._json(200, engine.careers.current().store.messages(m.group(1)))
                 if method == "POST" and m:
                     return self._send_message(m.group(1))
+                m = re.fullmatch(r"/logo/(club|comp)/(\d+)", path)
+                if method == "GET" and m:
+                    f = graphics.logo(m.group(1), int(m.group(2)))
+                    if not f:
+                        return self._json(404, {"error": "no logo"})
+                    return self._send(200, f.read_bytes(), "image/png" if f.suffix == ".png" else "image/jpeg")
                 m = re.fullmatch(r"/face/(\d+)", path)
                 if method == "GET" and m:
                     png = GRAPHICS / f"faces/face_{m.group(1)}.png"
@@ -413,6 +428,7 @@ def background(engine: Engine, interval: float = 3.0) -> None:
             engine.story.poll(career)
             engine.contacts.poll(career)
             engine.story.backfill_posts(career)
+            engine.social.ingest_fm(career)
         except BridgeUnavailable:
             pass
         except Exception as e:  # never let the loop die
@@ -438,6 +454,7 @@ def serve() -> None:
     engine = Engine()
     threading.Thread(target=background, args=(engine,), daemon=True, name="background").start()
     threading.Thread(target=native_loop, args=(engine,), daemon=True, name="native").start()
+    threading.Thread(target=graphics.logo, args=("club", 0), daemon=True, name="logos").start()  # build the index
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(engine))  # never reachable from the network
     path = write_api_file(engine)
     print(f"FM27Real engine on http://127.0.0.1:{PORT} (token in {path})", file=sys.stderr)

@@ -126,11 +126,11 @@ class StoryEngine:
                                         if r.startswith("01")))
             weight = news_weight(title)
             payload = {"id": news_id, "title": title, "body": body[:1500], "from": _ref(v.get("spin")),
+                       "fm_posts": self.fm_posts(v.get("wZa ")),
                        "people": people, "names": {r: self.name(r) for r in people[:6]}, "weight": weight}
             if not store.add_event("news", date, payload, event_key=f"news:{news_id}"):
                 continue
             self.new_news = True
-            self._fm_posts(career, news_id, date, title, v.get("wZa "))
             if weight < 1:
                 continue
             for person in people:
@@ -140,35 +140,35 @@ class StoryEngine:
 
     def backfill_posts(self, career: Career) -> None:
         """Once per memory: FM's posts under news read before posts were collected."""
-        if career.store.get_meta("fm_posts_backfilled"):
+        if career.store.get_meta("fm_posts_v2"):
             return
         news = {(e["payload"] or {}).get("id"): e for e in career.store.events("news", limit=500)}
         for item in self.bridge.query(career.manager_id, ["SWEN"]).get("SWEN") or []:
             target = (item or {}).get("target") if isinstance(item, dict) else None
             news_id = target_pairs(target or "").get("dinu")
             e = news.get(news_id)
-            if not e:
+            if not e or (e["payload"] or {}).get("fm_posts") is not None:
                 continue
-            posts = self.bridge.query_target(target, ["wZa "]).get("wZa ")
-            self._fm_posts(career, news_id, e["game_date"], (e["payload"] or {}).get("title") or "", posts)
-        career.store.set_meta("fm_posts_backfilled", "1")
+            posts = self.fm_posts(self.bridge.query_target(target, ["wZa "]).get("wZa "))
+            career.store.update_event(e["event_key"], (e["payload"] or {}) | {"fm_posts": posts})
+        career.store.set_meta("fm_posts_v2", "1")
 
-    def _fm_posts(self, career: Career, news_id: int, date: str, title: str, posts) -> None:
-        """FM's own social media posts under a news item become social posts in the world."""
-        for i, post in enumerate(posts if isinstance(posts, list) else []):
+    def fm_posts(self, posts) -> list[dict]:
+        """FM's own social media posts under a news item, cleaned (social.py turns them into a post)."""
+        out = []
+        for post in posts if isinstance(posts, list) else []:
             p = (post or {}).get("props") or {} if isinstance(post, dict) else {}
             text = clean(p.get("6OW7"))
             if not text:
                 continue
             kind = POST_KINDS.get(p.get("oQxa"), "fan")
             author = _ref(p.get("XXiT"))
-            name = clean(p.get("ggte")) if kind == "fan" else self.name(author)
-            career.store.add_event("social_post", date, {
-                "origin": "fm", "source": f"news:{news_id}", "about": title,
-                "author": {"kind": kind, "name": name or "", "handle": clean(p.get("JEJX")),
-                           "ref": author if kind not in ("fan",) else None, "verified": bool(p.get("JvU0")) or kind != "fan"},
-                "text": text, "likes": p.get("737f") if isinstance(p.get("737f"), int) else 0, "replies": []},
-                event_key=f"social:fm:{news_id}:{i}")
+            out.append({"kind": kind, "name": clean(p.get("ggte")) if kind == "fan" else self.name(author),
+                        "handle": clean(p.get("JEJX")), "ref": author if kind != "fan" else None,
+                        "verified": bool(p.get("JvU0")) or kind != "fan", "text": text,
+                        "likes": p.get("737f") if isinstance(p.get("737f"), int) else 0,
+                        "links": _links(p.get("6OW7"))})
+        return out
 
     # --- matches -----------------------------------------------------------------
     def _fixtures(self, squad: list[str]) -> dict[tuple, str]:

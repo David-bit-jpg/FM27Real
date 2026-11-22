@@ -94,17 +94,35 @@
   .press .foot { display: flex; justify-content: space-between; padding: 0 14px 10px; color: var(--muted); font-size: 12px; }
   .press .foot button { background: none; border: 0; color: var(--muted); text-decoration: underline; font-size: 12px; padding: 0; }
   .feed { padding: 4px 0 16px; }
-  .post { margin: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
-  .post .who { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-  .post .nm { font-weight: 650; } .post .hd, .post .dt { color: var(--muted); font-size: 12px; }
-  .post .ok { color: #59a6ff; font-size: 12px; }
-  .post .tx { margin-top: 4px; white-space: pre-wrap; }
-  .post .act { margin-top: 6px; display: flex; gap: 14px; color: var(--muted); font-size: 12px; }
-  .post .act button { background: none; border: 0; color: var(--muted); padding: 0; font-size: 12px; }
-  .post .rep { margin: 8px 0 0 12px; padding-left: 10px; border-left: 2px solid var(--line); }
-  .post .rep .r { margin: 6px 0; } .post .rep .r.me .nm { color: #ff7fb3; }
-  .compose { display: flex; gap: 8px; margin: 10px 12px; }
+  [hidden] { display: none !important; }
+  .post { margin: 10px 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); overflow: hidden; }
+  .post.at { border-color: #d6246e88; }
+  .post .head { display: flex; gap: 9px; align-items: center; padding: 9px 11px; }
+  .post .head .avatar, .post .head .av { width: 34px; height: 34px; border-radius: 50%; object-fit: contain; background: #0d1426; }
+  .av-txt { font-size: 13px; }
+  .post .nm { font-weight: 650; } .post .nm.me { color: #ff7fb3; } .post .ok { color: #59a6ff; font-size: 11px; }
+  .post .hd { color: var(--muted); font-size: 11px; }
+  .pic { background: linear-gradient(135deg, #1c3f8f, #0b1530 60%, #4a1236); }
+  .pic.match { display: flex; align-items: center; justify-content: space-around; padding: 22px 8px; }
+  .pic .side { text-align: center; width: 30%; } .pic .crest { width: 64px; height: 64px; object-fit: contain; }
+  .pic .crest.blank { display: inline-block; border-radius: 50%; background: #ffffff18; }
+  .pic .tn { margin-top: 6px; font-weight: 650; font-size: 13px; }
+  .pic .mid { text-align: center; } .pic .sc { font-size: 34px; font-weight: 800; letter-spacing: 2px; }
+  .pic .cp { color: #c9d4f0; font-size: 11px; margin-top: 4px; }
+  .pic.portrait { display: flex; justify-content: center; align-items: flex-end; height: 220px; }
+  .pic .face { height: 210px; } .pic .biglogo { height: 150px; margin: auto; object-fit: contain; }
+  .post .act { display: flex; gap: 16px; padding: 8px 11px 0; color: var(--muted); font-size: 13px; }
+  .post .act button { background: none; border: 0; color: var(--muted); padding: 0; }
+  .post .cap { padding: 6px 11px 0; white-space: pre-wrap; }
+  .cmts { padding: 4px 11px 10px; }
+  .cm { margin-top: 7px; font-size: 13px; white-space: pre-wrap; } .cm.at { background: #d6246e1a; border-radius: 6px; padding: 3px 5px; }
+  .cm .to { color: #9fc0ff; } .cact { display: flex; gap: 12px; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .cact button, .cmts .more { background: none; border: 0; color: var(--muted); padding: 0; font-size: 11px; }
+  .cmts .more { margin-top: 8px; }
+  .compose { display: flex; gap: 8px; margin: 8px 11px 10px; }
   .compose button { border: 0; border-radius: 8px; padding: 0 14px; background: var(--accent); color: #fff; font-weight: 650; flex: none; }
+  .notes { margin: 8px 12px; padding: 8px 10px; border-radius: 10px; background: #2a1530; border: 1px solid #d6246e55; font-size: 13px; }
+  .note { margin: 4px 0; }
   .moodbar { margin: 8px 14px 0; color: var(--muted); font-size: 12px; }
   .card { margin: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
   .card .meta { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
@@ -141,7 +159,8 @@
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
   zh: { phone: "主教练手机", messages: "消息", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
-        refreshing: "大家正在发帖…", fanMood: "球迷对你的情绪", noPosts: "还没有帖子。比赛和新闻之后大家会在这里发帖。", sending: "发送中…", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
+        refreshing: "大家正在发帖…", answersLater: "已发出。回复会在之后几个小时里陆续出现。", allComments: "查看全部 N 条评论",
+        notifications: "通知", repliedYou: "回复了你", mentionedYou: "提到了你", fanMood: "球迷对你的情绪", noPosts: "还没有帖子。比赛和新闻之后大家会在这里发帖。", sending: "发送中…", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
         pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
         potm: "全场最佳", scorers: "进球", showAll: "显示全部收件箱", showImportant: "只看重要的", results: { "赢了": "胜", "输了": "负", "打平": "平" }, settings: "设置", recent: "最近聊天", squad: "一线队",
         noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
@@ -153,7 +172,8 @@ const T = {
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
   en: { phone: "Manager's phone", messages: "Messages", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
-        refreshing: "People are posting…", fanMood: "Supporters' mood", noPosts: "No posts yet. People post here after matches and news.", sending: "Sending…", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
+        refreshing: "People are posting…", answersLater: "Sent. Answers will come in over the next few hours.", allComments: "View all N comments",
+        notifications: "Notifications", repliedYou: "replied to you", mentionedYou: "mentioned you", fanMood: "Supporters' mood", noPosts: "No posts yet. People post here after matches and news.", sending: "Sending…", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
         pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
         potm: "Player of the match", scorers: "Goals", showAll: "Show whole inbox", showImportant: "Important only", results: { "赢了": "W", "输了": "L", "打平": "D" }, settings: "Settings", recent: "Recent", squad: "First team",
         noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
@@ -219,7 +239,7 @@ function setHeader(title, showBack) {
   $("back").hidden = !showBack;
   setUnread(unreadCount); $("tab-settings").textContent = t("settings"); $("tab-feed").textContent = t("feed");
   $("tab-feed").classList.toggle("on", view === "feed");
-  $("tab-social").textContent = t("social"); $("tab-social").classList.toggle("on", view === "social");
+  setSocialBadge(socialCount); $("tab-social").classList.toggle("on", view === "social");
   $("tab-home").classList.toggle("on", view === "home" || view === "chat");
   $("tab-settings").classList.toggle("on", view === "settings");
   document.documentElement.lang = lang;
@@ -357,6 +377,30 @@ function moodWords(m) {
   const i = m <= -7 ? 0 : m <= -4 ? 1 : m <= -2 ? 2 : m < 0 ? 3 : m === 0 ? 4 : m <= 3 ? 5 : m <= 6 ? 6 : 7;
   return (lang === "en" ? en : zh)[i];
 }
+const tok = () => `token=${encodeURIComponent(TOKEN)}`;
+function logoImg(uid, cls) {
+  if (!uid) return el("div", { class: cls + " blank" });
+  const src = `/logo/club/${uid}?${tok()}`;
+  const img = el("img", { class: cls, src, alt: "" });
+  let tries = 0;  // the logo index may still be building right after the engine starts
+  img.onerror = () => { if (tries++ < 2) setTimeout(() => { img.src = src + "&r=" + tries; }, 4000); else img.replaceWith(el("div", { class: cls + " blank" })); };
+  return img;
+}
+function authorAvatar(a) {
+  if (a.kind === "club" && a.club_uid) return logoImg(a.club_uid, "av");
+  if (a.uid) return avatar({ name: a.name, uid: a.uid });
+  return el("div", { class: "avatar av-txt" }, (a.name || "?").slice(0, 1));
+}
+function picture(p) {
+  if (!p) return null;
+  if (p.type === "match") return el("div", { class: "pic match" },
+    el("div", { class: "side" }, logoImg(p.home.club_uid, "crest"), el("div", { class: "tn" }, p.home.name)),
+    el("div", { class: "mid" }, el("div", { class: "sc" }, `${p.score[0]} - ${p.score[1]}`), el("div", { class: "cp" }, `${p.competition || ""} · ${p.date || ""}`)),
+    el("div", { class: "side" }, logoImg(p.away.club_uid, "crest"), el("div", { class: "tn" }, p.away.name)));
+  if (p.type === "face") { const i = el("img", { class: "face", src: `/face/${p.uid}?${tok()}`, alt: "" }); i.onerror = () => i.remove(); return el("div", { class: "pic portrait" }, i); }
+  if (p.type === "logo" && p.club_uid) return el("div", { class: "pic portrait" }, logoImg(p.club_uid, "biglogo"));
+  return null;
+}
 async function showSocial(skipRefresh) {
   view = "social"; current = null; setHeader(t("social"), false);
   const main = $("main");
@@ -365,41 +409,61 @@ async function showSocial(skipRefresh) {
   try { data = await api("/api/social"); banner(""); }
   catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
   if (view !== "social") return;
-  const author = (a, date) => el("div", { class: "who" }, el("span", { class: "nm" }, a.name),
-    a.verified ? el("span", { class: "ok" }, "✔") : null, a.handle ? el("span", { class: "hd" }, "@" + a.handle) : null,
-    date ? el("span", { class: "dt" }, date) : null);
+  const name = a => el("span", { class: "nm" + (a.kind === "manager" ? " me" : "") }, a.name, a.verified ? el("span", { class: "ok" }, " ✔") : null);
+  const send = async (body, input) => {
+    const text = input.value.trim(); if (!text) return;
+    input.disabled = true; input.value = t("sending");
+    try { const r = await api("/api/social/reply", { ...body, text }); if (r.answers_in_hours) banner(t("answersLater"));
+      showSocial(true); }
+    catch (e) { input.disabled = false; input.value = text; banner(e.message, true); }
+  };
   const card = p => {
-    const rep = el("div", { class: "rep" }, (p.replies || []).map(r => el("div", { class: "r" + (r.kind === "manager" ? " me" : "") },
-      author(r), el("div", { class: "tx" }, r.text))));
-    const input = el("input", { placeholder: t("replyPh"), autocomplete: "off" });
-    const form = el("form", { class: "compose", hidden: true }, input, el("button", { type: "submit" }, t("reply")));
-    form.addEventListener("submit", async ev => {
-      ev.preventDefault(); const text = input.value.trim(); if (!text) return;
-      input.disabled = true; input.value = t("sending");
-      try { await api("/api/social/reply", { key: p.key, text }); showSocial(true); }
-      catch (e) { input.disabled = false; input.value = text; banner(e.message, true); }
-    });
-    return el("div", { class: "post" }, author(p.author, p.date), el("div", { class: "tx" }, p.text),
-      el("div", { class: "act" }, el("span", {}, `♥ ${p.likes || 0}`),
-        el("button", { onclick: () => { form.hidden = !form.hidden; if (!form.hidden) input.focus(); } }, `${t("reply")} ${(p.replies || []).length || ""}`)),
-      rep, form);
+    const box = el("div", { class: "compose", hidden: true });
+    const input = el("input", { autocomplete: "off" });
+    let replyTo = null;
+    const openReply = (id, who) => { replyTo = id; input.placeholder = who ? `${t("reply")} @${who}…` : t("replyPh"); box.hidden = false; input.focus(); };
+    box.append(input, el("button", { type: "button", onclick: () => send({ key: p.key, reply_to: replyTo }, input) }, t("reply")));
+    input.addEventListener("keydown", ev => { if (ev.key === "Enter" && !ev.isComposing) send({ key: p.key, reply_to: replyTo }, input); });
+    const comments = p.comments || [];
+    const byId = Object.fromEntries(comments.map(c => [c.id, c]));
+    const list = el("div", { class: "cmts" });
+    let expanded = comments.length <= 4;
+    const drawComments = () => list.replaceChildren(...(expanded ? comments : comments.slice(0, 3)).map(c =>
+      el("div", { class: "cm" + (c.author.kind === "manager" ? " me" : "") + (c.mentions_manager ? " at" : "") },
+        name(c.author), c.reply_to && byId[c.reply_to] ? el("span", { class: "to" }, ` @${byId[c.reply_to].author.name}`) : null,
+        el("span", { class: "tx" }, " " + c.text),
+        el("div", { class: "cact" }, el("span", {}, `♥ ${c.likes || 0}`),
+          c.author.kind !== "manager" ? el("button", { onclick: () => openReply(c.id, c.author.name) }, t("reply")) : null))),
+      ...(!expanded ? [el("button", { class: "more", onclick: () => { expanded = true; drawComments(); } }, t("allComments").replace("N", comments.length))] : []));
+    drawComments();
+    return el("div", { class: "post" + (p.mentions_manager ? " at" : "") },
+      el("div", { class: "head" }, authorAvatar(p.author), el("div", { class: "who" }, name(p.author),
+        el("div", { class: "hd" }, [p.author.handle ? "@" + p.author.handle : "", p.date].filter(Boolean).join(" · ")))),
+      picture(p.picture),
+      el("div", { class: "act" }, el("span", {}, `♥ ${p.likes || 0}`), el("button", { onclick: () => openReply(null, null) }, `💬 ${comments.length}`)),
+      el("div", { class: "cap" }, name(p.author), el("span", { class: "tx" }, " " + p.text)),
+      list, box);
   };
   const input = el("input", { placeholder: t("postPh"), autocomplete: "off" });
-  const compose = el("form", { class: "compose" }, input, el("button", { type: "submit" }, t("post")));
-  compose.addEventListener("submit", async ev => {
-    ev.preventDefault(); const text = input.value.trim(); if (!text) return;
-    input.disabled = true; input.value = t("sending");
-    try { await api("/api/social/reply", { text }); showSocial(true); }
-    catch (e) { input.disabled = false; input.value = text; banner(e.message, true); }
-  });
+  const compose = el("div", { class: "compose" }, input, el("button", { type: "button", onclick: () => send({}, input) }, t("post")));
+  const notes = (data.notifications || []).length ? el("div", { class: "notes" },
+    el("div", { class: "section", style: "padding:0 0 4px" }, t("notifications")),
+    data.notifications.slice(0, 6).map(n => el("div", { class: "note" }, el("b", {}, n.who), ` ${n.type === "reply" ? t("repliedYou") : t("mentionedYou")}：`, n.text))) : null;
   const status = data.pending && !skipRefresh ? el("div", { class: "moodbar" }, t("refreshing")) : null;
   main.replaceChildren(el("div", { class: "feed" },
-    el("div", { class: "moodbar" }, `${t("fanMood")}：${moodWords(data.fan_mood)}`), compose, status,
+    el("div", { class: "moodbar" }, `${t("fanMood")}：${moodWords(data.fan_mood)}`), notes, compose, status,
     data.posts.length ? data.posts.map(card) : el("div", { class: "empty" }, t("noPosts"))));
+  if ((data.notifications || []).length) api("/api/social/seen", {}).then(() => setSocialBadge(0)).catch(() => {});
   if (data.pending && !skipRefresh) {
     try { await api("/api/social/refresh", {}); } catch (e) { banner(e.message, true); }
     if (view === "social") showSocial(true);
   }
+}
+let socialCount = 0;
+function setSocialBadge(n) {
+  socialCount = n || 0;
+  const tab = $("tab-social"); tab.textContent = t("social");
+  if (n) tab.append(el("span", { class: "badge" }, String(n)));
 }
 
 // --- chat ----------------------------------------------------------------------
@@ -549,6 +613,8 @@ $("back").onclick = showHome;
   try { const s = await api("/api/status"); lang = s.settings.language || "zh";
     if (!s.bridge) banner(t("noBridge")); }
   catch (e) { banner(e.message, true); }
+  const badges = async () => { try { const s = await api("/api/press/active"); setUnread(s.messages); setSocialBadge(s.social); } catch (e) {} };
+  badges(); setInterval(badges, 10000);
   const qs = new URLSearchParams(location.search), person = qs.get("person");
   if (qs.get("press")) openPress(); else if (person) openPerson(person); else showHome();
 })();
