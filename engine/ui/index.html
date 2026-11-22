@@ -728,7 +728,6 @@ async function showSettings() {
       el("div", { class: "seg", style: "margin-top:8px" }, [[true, t("on")], [false, t("off")]].map(([v, label]) =>
         el("button", { class: (settings.game_edits !== false) === v ? "on" : "", onclick: async () => {
           settings = await api("/api/settings", { game_edits: v }); showSettings(); } }, label)))),
-    el("button", { class: "btn", type: "button", onclick: async () => { await api("/api/edits/test", {}); showSettings(); } }, t("testEdit")),
     editLog));
   api("/api/edits").then(d => {
     const rows = [...(d.pending || []).map(p => el("div", { class: "note" }, `⏳ ${p.name || p.record} · ${p.field} ${p.delta > 0 ? "+" : ""}${p.delta} — ${p.reason}`)),

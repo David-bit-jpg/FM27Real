@@ -31,7 +31,7 @@ from .stats import season_values
 from .squad import Roster
 
 MAX_AGE_DAYS = 5            # events older than this get no posts
-MAX_EVENTS_PER_REFRESH = 2  # one model call each
+MAX_EVENTS_PER_REFRESH = 3  # one model call each
 LIFE_POST_DAYS = 3          # a player life post at most this often
 FAN_MOOD_LIMIT = 10
 KINDS = ["club", "media", "pundit", "player", "fan", "journalist"]
@@ -54,6 +54,16 @@ POST = {"type": "object", "additionalProperties": False,
             "comments": {"type": "array", "items": PERSON}}}
 EVENT_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["posts"],
                 "properties": {"posts": {"type": "array", "items": POST}}}
+MEDIA_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["stories"], "properties": {"stories": {
+    "type": "array", "items": {"type": "object", "additionalProperties": False,
+                               "required": ["outlet", "style", "headline", "text", "people", "likes", "comments"],
+                               "properties": {
+                                   "outlet": {"type": "string", "description": "media name, e.g. 懂球帝, ESPN, 太阳报, 天空体育"},
+                                   "style": {"type": "string", "enum": ["report", "tabloid", "rumour"]},
+                                   "headline": {"type": "string"}, "text": {"type": "string"},
+                                   "people": {"type": "array", "items": {"type": "string"},
+                                              "description": "exact names of our players the story is about"},
+                                   "likes": {"type": "integer"}, "comments": {"type": "array", "items": PERSON}}}}}}
 REPLY_SCHEMA = {"type": "object", "additionalProperties": False,
                 "required": ["replies", "uproar", "fan_mood_delta", "headline"],
                 "properties": {"replies": {"type": "array", "items": PERSON},
@@ -231,7 +241,17 @@ class SocialFeed:
         out = []
         done = {p.get("source") for p in self._all(career, 1000)} | {
             (e["payload"] or {}).get("source") for e in career.store.events("social_post_none", limit=500)}
-        for kind in ("upcoming", "match", "press_answer", "news"):
+        confs: dict[str, list[dict]] = {}
+        for e in career.store.events("press_answer", limit=60):
+            if _age(career, e["game_date"]) <= MAX_AGE_DAYS:
+                confs.setdefault(e["game_date"], []).append(e["payload"] or {})
+        for day, answers in confs.items():
+            key = f"pressconf:{day}"
+            if key not in done:
+                out.append({"key": key, "kind": "press_conference", "date": day, "payload": {"answers": answers}})
+        if f"media:{career.date}" not in done:
+            out.append({"key": f"media:{career.date}", "kind": "media_day", "date": career.date, "payload": {}})
+        for kind in ("upcoming", "match", "news"):
             for e in career.store.events(kind, limit=40):
                 p = e["payload"] or {}
                 key = e.get("event_key") or f"{kind}:{e['game_date']}:{p.get('question', '')[:20]}"
@@ -239,8 +259,8 @@ class SocialFeed:
                     continue
                 if kind == "upcoming" and _age(career, p.get("date")) > 0:  # the match has been played
                     continue
-                if (kind == "match" and not p.get("club")) or (kind == "press_answer" and not p.get("headline")) or \
-                        (kind == "news" and ((p.get("weight") or 1) < 1.5 or p.get("origin") == "social")):
+                if (kind == "match" and not p.get("club")) or \
+                        (kind == "news" and ((p.get("weight") or 1) < 1.5 or p.get("origin") in ("social", "media"))):
                     continue
                 out.append({"key": key, "kind": kind, "date": e["game_date"], "payload": p})
         out.sort(key=lambda x: x["date"] or "", reverse=True)
@@ -255,6 +275,12 @@ class SocialFeed:
     # --- context -----------------------------------------------------------------
     def _describe(self, ev: dict) -> str:
         p = ev["payload"]
+        if ev["kind"] == "press_conference":
+            qa = "\n".join(f"- {(a.get('journalist') or {}).get('outlet', '')}：「{a.get('question')}」→ 主教练：「{a.get('answer')}」"
+                           for a in p.get("answers") or [])
+            return f"Press conference {ev['date']}, the manager's answers:\n{qa}"
+        if ev["kind"] == "media_day":
+            return f"Football media day {ev['date']}"
         if ev["kind"] == "upcoming":
             line = (f"Upcoming match {p.get('date')} {p.get('time')}: {p.get('competition')} {p.get('home_name')} vs "
                     f"{p.get('away_name')} (the manager's team plays {'at home' if p.get('we_home') else 'away'}).")
@@ -276,7 +302,21 @@ class SocialFeed:
         return f"News {ev['date']}: {p.get('title')}. {(p.get('body') or '')[:300]}"
 
     def _extra(self, career: Career, ev: dict) -> str:
-        """Form before a match; fans' predictions and bets after it."""
+        """Form before a match; fans' predictions and bets after it; the dressing room for media days."""
+        if ev["kind"] == "media_day":
+            players = self.roster.at_club(career)
+            groups: dict = {}
+            for p in players:
+                groups.setdefault(p.get("group"), []).append(p["name"])
+            unhappy = [f"{p['name']}: {h}" for p in players for h in p.get("happiness") or []
+                       if any(w in h for w in ("不满", "不开心", "失望", "沮丧", "担心"))]
+            reports = [f"{(e['payload'] or {}).get('name')}: {(e['payload'] or {}).get('reason', '')[:160]}"
+                       for e in career.store.events("contact", limit=20)
+                       if str((e["payload"] or {}).get("source", "")).startswith(("report:", "complaint:"))]
+            lines = [f"Social circle {k}: {'、'.join(v)}" for k, v in groups.items()]
+            return ("\n\nDRESSING ROOM (FM's own data):\n" + "\n".join(f"- {x}" for x in lines) +
+                    "\nUnhappy players (FM's words):\n" + ("\n".join(f"- {x}" for x in unhappy) or "- none") +
+                    "\nWhat players have told the manager lately:\n" + ("\n".join(f"- {x}" for x in reports) or "- nothing"))
         if ev["kind"] == "upcoming":
             form: dict[str, list] = {}
             for m in career.store.events("match", limit=3):
@@ -370,7 +410,15 @@ class SocialFeed:
                               f"with 6 to 10 fan comments: who they want in the starting XI and why (real players, by "
                               f"position and form), score predictions, betting picks and parlays using ONLY the odds "
                               f"given (no other numbers), some @mentioning the manager with demands.")
+                if ev["kind"] == "press_conference":
+                    system = (f"You write the Instagram reaction to {career.manager_name}'s press conference at "
+                              f"{career.team_name}. {RULES.replace('{manager}', career.manager_name)} Write 1 to 3 posts "
+                              f"(media outlets quoting his most striking answers word for word, picture 'quote' with the exact "
+                              f"quote, or 'none'), each with 5 to 9 comments: fans and pundits judging what he said.")
                 prompt = f"{self._context(career, players)}\n\nTHE EVENT:\n{self._describe(ev)}{self._extra(career, ev)}"
+                if ev["kind"] == "media_day":
+                    added += self._media_day(career, model, players, ev, prompt, now)
+                    continue
                 try:
                     out = model.complete(system, prompt, EVENT_SCHEMA)
                 except ModelError:
@@ -393,6 +441,50 @@ class SocialFeed:
             return added
         finally:
             self.lock.release()
+
+    def _media_day(self, career: Career, model: Provider, players: dict[str, dict], ev: dict, prompt: str,
+                   now: str) -> int:
+        """Today's football media about the club: reports, tabloid gossip, dressing-room rumours. Each story is a post,
+        a news item everyone knows about, and a memory for the players it names."""
+        system = (f"You are the football media covering {career.team_name} in the world of Football Manager 27. Write 2 or 3 "
+                  f"stories for today, each from a different outlet and style: 'report' (懂球帝/ESPN style analysis or a "
+                  f"transfer/tactics angle, built only on the real results, stats and news given), 'tabloid' (太阳报 style "
+                  f"gossip about a player's life off the pitch: nights out, family, cars, fashion — written as 'reportedly' "
+                  f"or 'sources say'), 'rumour' (who has fallen out with whom in the dressing room, using the dressing-room "
+                  f"data: players from different circles, unhappy players, what players told the manager). Football facts "
+                  f"must come from the context; off-pitch gossip may be invented but stay plausible and never malicious. "
+                  f"Name only real players. Each story has 4 to 8 comments. "
+                  f"{RULES.replace('{manager}', career.manager_name)}")
+        try:
+            out = model.complete(system, prompt, MEDIA_SCHEMA)
+        except ModelError:
+            return 0
+        n = 0
+        for i, s in enumerate(out.get("stories") or []):
+            text, headline = str(s.get("text") or "").strip()[:600], str(s.get("headline") or "").strip()[:80]
+            if not text or not headline:
+                continue
+            refs = [players[nm]["ref"] for nm in s.get("people") or [] if nm in players]
+            built = {"author": {"kind": "media", "name": str(s.get("outlet") or "媒体")[:30], "handle": "", "ref": None,
+                                "uid": None, "club_uid": None, "verified": True},
+                     "text": f"【{headline}】{text}", "likes": max(0, min(int(s.get("likes") or 0), 300000)),
+                     "mentions_manager": False}
+            comments = [self._comment(c, date=career.date) for c in
+                        (self._author(career, x, players) for x in s.get("comments") or []) if c]
+            if self._store_post(career, ev["key"], headline, built, None, comments, now, f"social:{ev['key']}:{i}"):
+                n += 1
+                style = s.get("style")
+                career.store.add_event("news", career.date, {
+                    "id": None, "title": headline, "body": text, "people": refs, "origin": "media", "style": style,
+                    "outlet": built["author"]["name"], "weight": 1.2 if style == "report" else 1.0},
+                    event_key=f"news:media:{career.date}:{i}")
+                for ref in refs:
+                    label = {"tabloid": "小报", "rumour": "传闻", "report": "报道"}.get(style, "报道")
+                    career.store.add_memory(ref, f"{built['author']['name']}的{label}写到了他：「{headline}」", career.date,
+                                            "media", 1.3 if style != "report" else 1.0, "news", f"media:{career.date}:{i}")
+        if not n:
+            career.store.add_event("social_post_none", career.date, {"source": ev["key"]})
+        return n
 
     def _life_post(self, career: Career, model: Provider, players: dict[str, dict], now: str) -> int:
         """Now and then a player posts about his life, often with a teammate from his circle."""

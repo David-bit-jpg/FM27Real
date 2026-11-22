@@ -38,11 +38,18 @@ KINDS = {
     "ask_dressing_room_advice": (1039, "ask his advice about the dressing room"),
     "praise_loan": (1032, "praise his loan spell"),
     "criticise_loan": (1036, "criticise his loan spell"),
+    "criticise_harsh": (1000, "tell him harshly that his performances are not good enough"),
+    "praise_leadership": (1037, "thank him for his leadership and example as a (vice-)captain"),
+    "criticise_leadership": (1038, "criticise his conduct as a (vice-)captain"),
+    "ask_help_recruit": (1022, "ask him to help persuade a friend (e.g. a national-team team-mate) to join the club"),
+    "set_playing_time_goal": (1106, "set him a challenge: earn a pathway to more playing time next season"),
 }
 KIND_ZH = {"praise_form": "表扬近期状态", "praise_last_match": "表扬上一场的表现", "praise_training": "表扬训练",
            "criticise_training": "批评训练", "criticise_form": "批评近期状态", "criticise_last_match": "批评上一场的表现",
            "encourage_youngster": "鼓励年轻球员", "reassure_injury": "安慰伤病", "ask_patience_playing_time": "谈出场时间",
-           "ask_dressing_room_advice": "征求更衣室建议", "praise_loan": "表扬租借表现", "criticise_loan": "批评租借表现"}
+           "ask_dressing_room_advice": "征求更衣室建议", "praise_loan": "表扬租借表现", "criticise_loan": "批评租借表现",
+           "criticise_harsh": "严厉批评", "praise_leadership": "感谢他的领导作用", "criticise_leadership": "批评他作为队长的表现",
+           "ask_help_recruit": "请他帮忙招募朋友", "set_playing_time_goal": "给他设定争取出场时间的目标"}
 KIND_NAMES = ["none", *KINDS]
 TONES = ["warm", "firm"]
 PREFER = {  # option group heads FM uses, in order of preference by tone (opening line)
