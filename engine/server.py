@@ -213,7 +213,8 @@ def make_handler(engine: Engine):
                     career = engine.careers.current()
                     return self._json(200, {"posts": engine.social.posts(career), "fan_mood": engine.social.fan_mood(career),
                                             "pending": len(engine.social.pending(career)),
-                                            "notifications": engine.social.notifications(career)})
+                                            "notifications": engine.social.notifications(career),
+                                            "people": [{"id": p["id"], "name": p["name"]} for p in engine.roster.players(career)]})
                 if method == "POST" and path == "/api/social/seen":
                     engine.social.mark_seen(engine.careers.current())
                     return self._json(200, {"ok": True})
@@ -277,6 +278,13 @@ def make_handler(engine: Engine):
                         "record": career.manager_id, "name": career.manager_name, "kind": "person", "field": "当前声望",
                         "delta": 1, "reason": "测试修改", "status": "pending"}, event_key=f"edit:test:{career.clock}")
                     return self._json(200, {"queued": True})
+                if method == "POST" and path == "/api/fm/open":  # FM's own page, as a clicked name link
+                    body = self._body()
+                    record = str(body.get("record") or "")
+                    if not re.fullmatch(r"[0-9a-fA-F]{8}", record):
+                        return self._json(400, {"error": "record required"})
+                    kind = "club" if body.get("kind") == "club" else "person"
+                    return self._json(200, {"opened": engine.bridge.open_page(record, kind)})
                 if method == "GET" and path == "/api/talks":
                     career = engine.careers.current()
                     return self._json(200, {"log": engine.talks.log(career),
@@ -397,7 +405,8 @@ def make_handler(engine: Engine):
                     item |= {"title": p.get("title"), "body": p.get("body"), "people": people}
                 items.append(item)
             items.sort(key=lambda i: (i["date"] or "", i["kind"] == "match"), reverse=True)
-            self._json(200, {"items": items[:120]})
+            self._json(200, {"items": items[:120],
+                             "people": [{"id": r, "name": n} for r, n in roster_names.items()]})
 
         def _inbox(self) -> None:
             career = engine.careers.current()

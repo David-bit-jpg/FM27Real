@@ -1535,6 +1535,68 @@ static int ui_main(void) {
     return 1;
 }
 
+
+// --- jumping to FM's own page for a record (as a clicked name link does) ----------
+// Builds the reference a text link carries (PersonReference / ClubReference with
+// ' 011', Guid, ferd), wraps it in a ReferenceTypedValue, packs it into the click
+// event's record (EmbeddedDataClickedEvent.PackValueInRecordForEvent) and hands the
+// event to FM's EmbeddedDataHandler.OnClickedEvent, which opens the page itself.
+static int nav_open_main(uint32_t record, const char *kind) {
+    int club = !strcmp(kind, "club");
+    Il2CppClass *ref_k = il2cpp_find_class("FM.UI.dll", "FM.UI", club ? "ClubReference" : "PersonReference");
+    Il2CppClass *rtv_k = il2cpp_find_class("SI.Core.dll", "SI.Core", "ReferenceTypedValue");
+    Il2CppClass *evt_k = il2cpp_find_class("SI.Bindable.dll", "SI.Bindable", "EmbeddedDataClickedEvent");
+    Il2CppClass *h_k = il2cpp_find_class("FM.UI.dll", "FM.UI", "EmbeddedDataHandler");
+    const MethodInfo *set_value = method_up(rtv_k, "SetValue", 1);
+    const MethodInfo *pack = method_with_params(evt_k, "PackValueInRecordForEvent", 1);
+    const MethodInfo *evt_ctor = method_with_params(evt_k, ".ctor", 0);
+    const MethodInfo *set_record = method_with_params(evt_k, "set_Record", 1);
+    const MethodInfo *on_click = method_with_params(h_k, "OnClickedEvent", 1);
+    if (!ref_k || !rtv_k || !evt_k || !h_k || !set_value || !pack || !evt_ctor || !set_record || !on_click) {
+        log_line("nav: classes/methods missing (%p %p %p %p | %p %p %p %p %p)", (void *)ref_k, (void *)rtv_k, (void *)evt_k,
+                 (void *)h_k, (void *)set_value, (void *)pack, (void *)evt_ctor, (void *)set_record, (void *)on_click);
+        return -2;
+    }
+    char tn[128];
+    il2cpp_type_name(il2cpp_method_get_param(set_value, 0), tn, sizeof tn);
+    if (strcmp(tn, "System.Object")) {  // prefer SetValue(object) over SetValue(T)
+        void *it = NULL; const MethodInfo *m;
+        for (Il2CppClass *k = rtv_k; k; k = il2cpp_class_get_parent(k)) {
+            it = NULL;
+            while ((m = il2cpp_class_get_methods(k, &it)))
+                if (!strcmp(il2cpp_method_get_name(m), "SetValue") && il2cpp_method_get_param_count(m) == 1) {
+                    il2cpp_type_name(il2cpp_method_get_param(m, 0), tn, sizeof tn);
+                    if (!strcmp(tn, "System.Object")) { set_value = m; break; }
+                }
+            if (!strcmp(tn, "System.Object")) break;
+        }
+    }
+    Il2CppObject *handler = first_instance(h_k);
+    if (!handler) { log_line("nav: no EmbeddedDataHandler instance"); return -3; }
+    uint32_t codes[3] = {CODE_011, CODE_GUID, CODE_FERD};
+    int32_t vals[3] = {0x1c, (int32_t)g_guid, (int32_t)record};
+    Il2CppObject *ref = make_reference(ref_k, codes, vals, 3);
+    if (!ref) return -4;
+    Il2CppException *exc = NULL;
+    Il2CppObject *tv = il2cpp_object_new(rtv_k);
+    il2cpp_runtime_invoke(method_with_params(rtv_k, ".ctor", 0), tv, NULL, &exc);
+    void *a1[1] = {ref};
+    if (!exc) il2cpp_runtime_invoke(set_value, tv, a1, &exc);
+    if (exc) { log_line("nav: TypedValue build threw"); return -5; }
+    void *a2[1] = {tv};
+    Il2CppObject *rec = il2cpp_runtime_invoke(pack, NULL, a2, &exc);
+    if (exc || !rec) { log_line("nav: PackValueInRecordForEvent failed"); return -6; }
+    Il2CppObject *evt = il2cpp_object_new(evt_k);
+    il2cpp_runtime_invoke(evt_ctor, evt, NULL, &exc);
+    void *a3[1] = {rec};
+    if (!exc) il2cpp_runtime_invoke(set_record, evt, a3, &exc);
+    if (exc) { log_line("nav: event build threw"); return -7; }
+    void *a4[1] = {evt};
+    il2cpp_runtime_invoke(on_click, handler, a4, &exc);
+    log_line("nav: OnClickedEvent(%s %08x)%s", kind, record, exc ? " threw" : "");
+    return exc ? -8 : 1;
+}
+
 static void ige_step(void) {
     pthread_mutex_lock(&g_ige.m);
     if (g_ige.pending) {
@@ -1544,7 +1606,7 @@ static void ige_step(void) {
             log_line("ige: fault while opening the editor");
         } else {
             t_guard = &here;
-            g_ige.result = g_ige.op == 5 ? ui_main() : g_ige.op >= 3 ? ige_tab_main(g_ige.op == 4, g_ige.index)
+            g_ige.result = g_ige.op == 6 ? nav_open_main(g_ige.record, g_ige.kind) : g_ige.op == 5 ? ui_main() : g_ige.op >= 3 ? ige_tab_main(g_ige.op == 4, g_ige.index)
                          : g_ige.op ? ige_close_main(g_ige.op == 1) : ige_open_main(g_ige.record, g_ige.kind);
             t_guard = NULL;
         }
@@ -1577,6 +1639,7 @@ static int ige_run(uint32_t record, const char *kind, int op) {
 }
 
 int tap_editor_open(uint32_t record, const char *kind) { return ige_run(record, kind, 0); }
+int tap_nav_open(uint32_t record, const char *kind) { return ige_run(record, kind, 6); }
 int tap_editor_close(int dry) { return ige_run(0, "", dry ? 1 : 2); }
 int tap_editor_tab(int set, int index) { g_ige.index = index; return ige_run(0, "", set ? 4 : 3); }
 int tap_ui_click(const char *text, int click, int nth) {
@@ -1736,6 +1799,7 @@ char *tap_last_target(uint32_t type) { (void)type; return NULL; }
 int tap_send_event(uint32_t id, const uint8_t *t, int tl, const uint8_t *d, int dl) { (void)id; (void)t; (void)tl; (void)d; (void)dl; return 0; }
 char *tap_editor_json(void) { return strdup("[]"); }
 int tap_editor_open(uint32_t record, const char *kind) { (void)record; (void)kind; return 0; }
+int tap_nav_open(uint32_t record, const char *kind) { (void)record; (void)kind; return 0; }
 int tap_editor_close(int dry) { (void)dry; return 0; }
 int tap_editor_tab(int set, int index) { (void)set; (void)index; return 0; }
 int tap_ui_click(const char *text, int click, int nth) { (void)text; (void)click; (void)nth; return 0; }

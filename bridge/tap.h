@@ -57,6 +57,7 @@ int tap_editor_set(uint64_t key, const uint8_t *data, int data_len);
 // the pencil button does (IGEModule.OpenIGEPanel). Main thread, fault-guarded.
 // Returns 1 when called, <= 0 on failure.
 int tap_editor_open(uint32_t record, const char *kind);
+int tap_nav_open(uint32_t record, const char *kind);
 
 // Closes the In-Game Editor panel (PanelManager.CloseAll on the editor's layer).
 // With dry, only logs the layers involved. Returns 1 on success.

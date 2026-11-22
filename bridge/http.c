@@ -195,6 +195,16 @@ static void handle(int fd) {
         respond(fd, r == 1 ? 200 : 503, body);
         return;
     }
+    if (!strcmp(target, "/ui/open")) {
+        char rs[16] = "", kind[16] = "person";
+        if (!query || !param(query, "record", rs, sizeof rs)) { respond(fd, 400, "{\"error\":\"record required\"}"); return; }
+        param(query, "kind", kind, sizeof kind);
+        int r = tap_nav_open((uint32_t)strtoul(rs, NULL, 16), kind);
+        char body[64];
+        snprintf(body, sizeof body, "{\"result\":%d}", r);
+        respond(fd, r == 1 ? 200 : 503, body);
+        return;
+    }
     if (!strcmp(target, "/editor/tab")) {
         char ix[16] = "";
         int set = query && param(query, "index", ix, sizeof ix);

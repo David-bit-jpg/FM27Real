@@ -152,7 +152,9 @@
   .score .num { font-size: 18px; padding: 0 6px; }
   .card.life { border-left: 3px solid #59a6ff; } .card .lifetext { font-size: 13px; }
   .card.win { border-left: 3px solid var(--good); } .card.loss { border-left: 3px solid var(--bad); } .card.draw { border-left: 3px solid var(--warn); }
-  .link { color: #9fc0ff; cursor: pointer; } .link:hover { text-decoration: underline; }
+  .link { color: #9fc0ff; cursor: pointer; text-decoration: underline; text-decoration-color: rgba(159,192,255,.45);
+    text-underline-offset: 2px; } .link:hover { text-decoration-color: #9fc0ff; }
+  .nm.link { color: inherit; }
   .chips { margin-top: 6px; font-size: 12px; color: var(--muted); }
   .filter { display: flex; justify-content: flex-end; padding: 8px 14px 0; }
   .filter button { background: none; border: 0; color: var(--muted); font-size: 12px; text-decoration: underline; }
@@ -190,7 +192,7 @@ const T = {
         language: "界面语言", model: "模型", provider: "提供方", apiKey: "API key", keySaved: "已保存", keyKeep: "留空则保留已保存的 key",
         keyNone: "这个选项不需要 key；粘贴别家的 key 会自动切换", pickProvider: "请在上面选这个 key 属于哪家", baseUrl: "接口地址", modelName: "模型名称", fetchModels: "获取模型列表",
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
-        noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
+        openInFM: "在 FM 中打开", fmOpenFail: "FM 没能打开这个页面。", noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
   en: { phone: "Manager's phone", messages: "Messages", trainingGround: "🏟 Training ground", groups: "Group chats", newGroup: "+ New group", groupName: "Group name (optional)", create: "Create",
         pickMembers: "Pick members", groupTyping: "Someone is typing…", groupsUnavailable: "Group chats unavailable: restart the engine (scripts/restart-engine.sh)", refresh: "Refresh", me: "Me",
@@ -206,7 +208,7 @@ const T = {
         language: "Language", model: "Model", provider: "Provider", apiKey: "API key", keySaved: "Saved", keyKeep: "Leave empty to keep the saved key",
         keyNone: "No key needed (paste a key to switch)", pickProvider: "Choose which provider this key belongs to above", baseUrl: "API address", modelName: "Model", fetchModels: "List models",
         test: "Test connection", save: "Save", saved: "Saved", testing: "Testing…", testOk: "Connected", detected: "Recognised as",
-        noBridge: "No career loaded yet. Load a save and your team appears here.", noEngine: "Cannot reach the engine.", modelErr: "Model error: ",
+        openInFM: "Open in FM", fmOpenFail: "FM could not open that page.", noBridge: "No career loaded yet. Load a save and your team appears here.", noEngine: "Cannot reach the engine.", modelErr: "Model error: ",
         loading: "Loading…", keyPrivacy: "Your key stays on this computer and is only sent to the provider you choose." },
 };
 let lang = "zh", view = "home", current = null, providers = {}, settings = {};
@@ -222,6 +224,41 @@ function el(tag, attrs = {}, ...children) {
   }
   for (const c of children.flat(Infinity)) if (c !== null && c !== undefined) e.append(c.nodeType ? c : document.createTextNode(String(c)));
   return e;
+}
+
+// --- links into FM's own pages (as FM's underlined names) ---------------------------
+async function fmOpen(id, kind = "person") {
+  try { const r = await api("/api/fm/open", { record: id, kind }); if (!r.opened) banner(t("fmOpenFail"), true); }
+  catch (e) { banner(e.message, true); }
+}
+function fmLink(id, name, kind = "person") {
+  if (!id) return name || "";
+  return el("span", { class: "link", title: t("openInFM"), onclick: ev => { ev.stopPropagation(); fmOpen(id, kind); } }, name || id);
+}
+// Names of known people inside a text become links (full names, and surnames that are unambiguous).
+function linkify(text, people) {
+  text = text == null ? "" : String(text);
+  if (!text || !(people || []).length) return text;
+  const names = new Map(), surnames = new Map();
+  for (const p of people) {
+    if (!p.id || !p.name) continue;
+    names.set(p.name, p.id);
+    const last = p.name.split(/[ ·・]/).filter(Boolean).pop();
+    if (last && last !== p.name && last.length >= 2) surnames.set(last, surnames.has(last) ? null : p.id);
+  }
+  for (const [n, id] of surnames) if (id && !names.has(n)) names.set(n, id);
+  const keys = [...names.keys()].sort((a, b) => b.length - a.length).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!keys.length) return text;
+  const re = new RegExp(keys.join("|"), "g"), out = [];
+  let at = 0, m;
+  while ((m = re.exec(text))) {
+    const before = text[m.index - 1], after = text[m.index + m[0].length];
+    if (/[A-Za-z]/.test(before || "") || /[A-Za-z]/.test(after || "")) continue;  // inside a longer Latin word
+    out.push(text.slice(at, m.index), fmLink(names.get(m[0]), m[0]));
+    at = m.index + m[0].length;
+  }
+  out.push(text.slice(at));
+  return out;
 }
 
 async function api(path, body) {
@@ -321,7 +358,7 @@ async function showFeed() {
   try { data = await api("/api/feed" + (feedAll ? "?all=1" : "")); banner(""); }
   catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
   if (view !== "feed") return;
-  const who = (id, name) => id ? el("span", { class: "link", onclick: () => openPerson(id) }, name || id) : (name || "");
+  const who = (id, name) => fmLink(id, name), people = data.people || [];
   const card = it => {
     if (it.kind === "match") {
       const cls = { "赢了": "win", "输了": "loss", "打平": "draw" }[it.result] || "";
@@ -335,9 +372,9 @@ async function showFeed() {
     }
     if (it.kind === "life")
       return el("div", { class: "card life" }, el("div", { class: "meta" }, `${it.date} · ${t("trainingGround")}`),
-        el("div", { class: "lifetext" }, it.text),
+        el("div", { class: "lifetext" }, linkify(it.text, people)),
         (it.people || []).length ? el("div", { class: "chips" }, it.people.map((p, i) => [i ? " · " : "", who(p.id, p.name)])) : null);
-    const body = el("div", { class: "body" }, it.body || "");
+    const body = el("div", { class: "body" }, linkify(it.body || "", people));
     body.onclick = () => body.classList.toggle("open");
     return el("div", { class: "card" }, el("div", { class: "meta" }, it.date),
       el("div", { class: "head" }, it.title), it.body ? body : null,
@@ -480,7 +517,13 @@ async function showSocial(skipRefresh) {
   try { data = await api("/api/social"); banner(""); }
   catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
   if (view !== "social") return;
-  const name = a => el("span", { class: "nm" + (a.kind === "manager" ? " me" : "") }, a.name, a.verified ? el("span", { class: "ok" }, " ✔") : null);
+  const people = data.people || [];
+  const name = a => {
+    const linked = a.ref && /^[0-9a-f]{8}$/i.test(a.ref) && ["player", "manager", "club", "staff"].includes(a.kind);
+    return el("span", { class: "nm" + (a.kind === "manager" ? " me" : "") + (linked ? " link" : ""), title: linked ? t("openInFM") : null,
+      onclick: linked ? ev => { ev.stopPropagation(); fmOpen(a.ref, a.kind === "club" ? "club" : "person"); } : null },
+      a.name, a.verified ? el("span", { class: "ok" }, " ✔") : null);
+  };
   const send = async (body, input) => {
     const text = input.value.trim(); if (!text) return;
     input.disabled = true; input.value = t("sending");
@@ -509,7 +552,7 @@ async function showSocial(skipRefresh) {
     const drawComments = () => list.replaceChildren(...(expanded ? comments : comments.slice(0, 3)).map(c =>
       el("div", { class: "cm" + (c.author.kind === "manager" ? " me" : "") + (c.mentions_manager ? " at" : "") },
         name(c.author), c.reply_to && byId[c.reply_to] ? el("span", { class: "to" }, ` @${byId[c.reply_to].author.name}`) : null,
-        el("span", { class: "tx" }, " " + c.text),
+        el("span", { class: "tx" }, " ", linkify(c.text, people)),
         el("div", { class: "cact" }, el("span", {}, `♥ ${c.likes || 0}`),
           c.author.kind !== "manager" ? el("button", { onclick: () => openReply(c.id, c.author.name) }, t("reply")) : null))),
       ...(!expanded ? [el("button", { class: "more", onclick: () => { expanded = true; drawComments(); } }, t("allComments").replace("N", comments.length))] : []));
@@ -519,7 +562,7 @@ async function showSocial(skipRefresh) {
         el("div", { class: "hd" }, [p.author.handle ? "@" + p.author.handle : "", p.date].filter(Boolean).join(" · ")))),
       picture(p.picture),
       el("div", { class: "act" }, el("span", {}, `♥ ${p.likes || 0}`), el("button", { onclick: () => openReply(null, null) }, `💬 ${comments.length}`)),
-      el("div", { class: "cap" }, name(p.author), el("span", { class: "tx" }, " " + p.text)),
+      el("div", { class: "cap" }, name(p.author), el("span", { class: "tx" }, " ", linkify(p.text, people))),
       list, box);
   };
   const input = el("input", { placeholder: t("postPh"), autocomplete: "off" });
@@ -618,7 +661,7 @@ async function openPerson(id) {
   setHeader(person.name, true);
   const log = el("div", { class: "log" });
   const head = el("div", { class: "chat-head" }, avatar(person, true),
-    el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name" }, person.name),
+    el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name" }, /^[0-9a-f]{8}$/i.test(id) ? fmLink(id, person.name) : person.name),
       el("div", { class: "sub" }, [person.position, person.team_name, person.age && `${person.age}`].filter(Boolean).join(" · ")),
       moodChip(lastMood(messages))));
   const input = el("input", { placeholder: t("placeholder"), autocomplete: "off" });

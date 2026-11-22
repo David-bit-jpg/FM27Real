@@ -194,6 +194,13 @@ class Bridge:
         except urllib.error.HTTPError:
             return False
 
+    def open_page(self, record: str, kind: str = "person") -> bool:
+        """FM's own page for a person or club, opened as a clicked name link opens it."""
+        try:
+            return self._get(f"/ui/open?record={record}&kind={kind}", timeout=10).get("result") == 1
+        except urllib.error.HTTPError:
+            return False
+
     def ui_click(self, text: str) -> bool:
         try:
             return self._get("/ui/click?click=1&text=" + urllib.parse.quote(text), timeout=60).get("result") == 1
