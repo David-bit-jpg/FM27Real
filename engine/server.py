@@ -37,6 +37,7 @@ from .native import NativeSync
 from .story import StoryEngine
 from .press import PressRoom
 from .contacts import ContactEngine
+from .social import SocialFeed
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
@@ -106,6 +107,7 @@ class Engine:
         self.story = StoryEngine(self.bridge)
         self.press = PressRoom(self.bridge, self.native)
         self.contacts = ContactEngine(self.story)
+        self.social = SocialFeed(self.story)
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
@@ -188,6 +190,28 @@ def make_handler(engine: Engine):
                     except BridgeUnavailable:
                         status["unread"] = 0
                     return self._json(200, status)
+                if method == "GET" and path == "/api/social":
+                    career = engine.careers.current()
+                    return self._json(200, {"posts": engine.social.posts(career), "fan_mood": engine.social.fan_mood(career),
+                                            "pending": len(engine.social.pending(career))})
+                if method == "POST" and path == "/api/social/refresh":
+                    model = self._model()
+                    if model is None:
+                        return self._json(502, {"error": "no model configured", "code": "model"})
+                    return self._json(200, {"added": engine.social.refresh(engine.careers.current(), model)})
+                if method == "POST" and path == "/api/social/reply":
+                    body = self._body()
+                    text = str(body.get("text") or "").strip()[:500]
+                    if not text:
+                        return self._json(400, {"error": "text required"})
+                    model = self._model()
+                    if model is None:
+                        return self._json(502, {"error": "no model configured", "code": "model"})
+                    try:
+                        return self._json(200, engine.social.reply(engine.careers.current(), model,
+                                                                   body.get("key") or None, text))
+                    except ModelError as e:
+                        return self._json(502, {"error": str(e), "code": "model"})
                 if method == "GET" and path == "/api/inbox":
                     return self._inbox()
                 if method == "POST" and path == "/api/inbox/open":
@@ -388,6 +412,7 @@ def background(engine: Engine, interval: float = 3.0) -> None:
             career = engine.careers.current()
             engine.story.poll(career)
             engine.contacts.poll(career)
+            engine.story.backfill_posts(career)
         except BridgeUnavailable:
             pass
         except Exception as e:  # never let the loop die

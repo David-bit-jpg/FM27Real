@@ -94,6 +94,18 @@
   .press .foot { display: flex; justify-content: space-between; padding: 0 14px 10px; color: var(--muted); font-size: 12px; }
   .press .foot button { background: none; border: 0; color: var(--muted); text-decoration: underline; font-size: 12px; padding: 0; }
   .feed { padding: 4px 0 16px; }
+  .post { margin: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
+  .post .who { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .post .nm { font-weight: 650; } .post .hd, .post .dt { color: var(--muted); font-size: 12px; }
+  .post .ok { color: #59a6ff; font-size: 12px; }
+  .post .tx { margin-top: 4px; white-space: pre-wrap; }
+  .post .act { margin-top: 6px; display: flex; gap: 14px; color: var(--muted); font-size: 12px; }
+  .post .act button { background: none; border: 0; color: var(--muted); padding: 0; font-size: 12px; }
+  .post .rep { margin: 8px 0 0 12px; padding-left: 10px; border-left: 2px solid var(--line); }
+  .post .rep .r { margin: 6px 0; } .post .rep .r.me .nm { color: #ff7fb3; }
+  .compose { display: flex; gap: 8px; margin: 10px 12px; }
+  .compose button { border: 0; border-radius: 8px; padding: 0 14px; background: var(--accent); color: #fff; font-weight: 650; flex: none; }
+  .moodbar { margin: 8px 14px 0; color: var(--muted); font-size: 12px; }
   .card { margin: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
   .card .meta { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
   .card .head { font-weight: 650; }
@@ -117,6 +129,7 @@
   <div class="tabs">
     <button class="tab" id="tab-home"></button>
     <button class="tab" id="tab-feed"></button>
+    <button class="tab" id="tab-social"></button>
     <button class="tab" id="tab-settings"></button>
   </div>
 </header>
@@ -127,7 +140,8 @@
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
-  zh: { phone: "主教练手机", messages: "消息", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
+  zh: { phone: "主教练手机", messages: "消息", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
+        refreshing: "大家正在发帖…", fanMood: "球迷对你的情绪", noPosts: "还没有帖子。比赛和新闻之后大家会在这里发帖。", sending: "发送中…", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
         pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
         potm: "全场最佳", scorers: "进球", showAll: "显示全部收件箱", showImportant: "只看重要的", results: { "赢了": "胜", "输了": "负", "打平": "平" }, settings: "设置", recent: "最近聊天", squad: "一线队",
         noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
@@ -138,7 +152,8 @@ const T = {
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
-  en: { phone: "Manager's phone", messages: "Messages", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
+  en: { phone: "Manager's phone", messages: "Messages", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
+        refreshing: "People are posting…", fanMood: "Supporters' mood", noPosts: "No posts yet. People post here after matches and news.", sending: "Sending…", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
         pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
         potm: "Player of the match", scorers: "Goals", showAll: "Show whole inbox", showImportant: "Important only", results: { "赢了": "W", "输了": "L", "打平": "D" }, settings: "Settings", recent: "Recent", squad: "First team",
         noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
@@ -204,6 +219,7 @@ function setHeader(title, showBack) {
   $("back").hidden = !showBack;
   setUnread(unreadCount); $("tab-settings").textContent = t("settings"); $("tab-feed").textContent = t("feed");
   $("tab-feed").classList.toggle("on", view === "feed");
+  $("tab-social").textContent = t("social"); $("tab-social").classList.toggle("on", view === "social");
   $("tab-home").classList.toggle("on", view === "home" || view === "chat");
   $("tab-settings").classList.toggle("on", view === "settings");
   document.documentElement.lang = lang;
@@ -332,6 +348,58 @@ async function openPress() {
   };
   await render();
   pressTimer = setInterval(render, 1000);
+}
+
+// --- social --------------------------------------------------------------------
+function moodWords(m) {
+  const zh = ["怒不可遏", "非常不满", "不满", "将信将疑", "平静", "支持", "很支持", "狂热拥护"];
+  const en = ["furious", "very unhappy", "unhappy", "doubtful", "neutral", "supportive", "very supportive", "adoring"];
+  const i = m <= -7 ? 0 : m <= -4 ? 1 : m <= -2 ? 2 : m < 0 ? 3 : m === 0 ? 4 : m <= 3 ? 5 : m <= 6 ? 6 : 7;
+  return (lang === "en" ? en : zh)[i];
+}
+async function showSocial(skipRefresh) {
+  view = "social"; current = null; setHeader(t("social"), false);
+  const main = $("main");
+  if (!main.querySelector(".feed")) main.replaceChildren(el("div", { class: "empty" }, t("loading")));
+  let data;
+  try { data = await api("/api/social"); banner(""); }
+  catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
+  if (view !== "social") return;
+  const author = (a, date) => el("div", { class: "who" }, el("span", { class: "nm" }, a.name),
+    a.verified ? el("span", { class: "ok" }, "✔") : null, a.handle ? el("span", { class: "hd" }, "@" + a.handle) : null,
+    date ? el("span", { class: "dt" }, date) : null);
+  const card = p => {
+    const rep = el("div", { class: "rep" }, (p.replies || []).map(r => el("div", { class: "r" + (r.kind === "manager" ? " me" : "") },
+      author(r), el("div", { class: "tx" }, r.text))));
+    const input = el("input", { placeholder: t("replyPh"), autocomplete: "off" });
+    const form = el("form", { class: "compose", hidden: true }, input, el("button", { type: "submit" }, t("reply")));
+    form.addEventListener("submit", async ev => {
+      ev.preventDefault(); const text = input.value.trim(); if (!text) return;
+      input.disabled = true; input.value = t("sending");
+      try { await api("/api/social/reply", { key: p.key, text }); showSocial(true); }
+      catch (e) { input.disabled = false; input.value = text; banner(e.message, true); }
+    });
+    return el("div", { class: "post" }, author(p.author, p.date), el("div", { class: "tx" }, p.text),
+      el("div", { class: "act" }, el("span", {}, `♥ ${p.likes || 0}`),
+        el("button", { onclick: () => { form.hidden = !form.hidden; if (!form.hidden) input.focus(); } }, `${t("reply")} ${(p.replies || []).length || ""}`)),
+      rep, form);
+  };
+  const input = el("input", { placeholder: t("postPh"), autocomplete: "off" });
+  const compose = el("form", { class: "compose" }, input, el("button", { type: "submit" }, t("post")));
+  compose.addEventListener("submit", async ev => {
+    ev.preventDefault(); const text = input.value.trim(); if (!text) return;
+    input.disabled = true; input.value = t("sending");
+    try { await api("/api/social/reply", { text }); showSocial(true); }
+    catch (e) { input.disabled = false; input.value = text; banner(e.message, true); }
+  });
+  const status = data.pending && !skipRefresh ? el("div", { class: "moodbar" }, t("refreshing")) : null;
+  main.replaceChildren(el("div", { class: "feed" },
+    el("div", { class: "moodbar" }, `${t("fanMood")}：${moodWords(data.fan_mood)}`), compose, status,
+    data.posts.length ? data.posts.map(card) : el("div", { class: "empty" }, t("noPosts"))));
+  if (data.pending && !skipRefresh) {
+    try { await api("/api/social/refresh", {}); } catch (e) { banner(e.message, true); }
+    if (view === "social") showSocial(true);
+  }
 }
 
 // --- chat ----------------------------------------------------------------------
@@ -472,6 +540,7 @@ window.openHome = showHome;
 $("tab-home").onclick = showHome;
 $("tab-settings").onclick = showSettings;
 $("tab-feed").onclick = showFeed;
+$("tab-social").onclick = () => showSocial();
 window.openFeed = showFeed;
 window.openPress = openPress;
 $("back").onclick = showHome;
