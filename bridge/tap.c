@@ -586,6 +586,19 @@ static char *encode_guarded(Il2CppObject *v) {
     return j.data ? j.data : strdup("null");
 }
 
+// The value's own text, for the log; a fault costs only this value.
+static void string_guarded(Il2CppObject *v, char *buf, size_t n) {
+    sigjmp_buf here;
+    if (sigsetjmp(here, 1)) {
+        strlcpy(buf, "<unreadable>", n);
+        return;
+    }
+    t_guard = &here;
+    if (is_typed_value(v)) typed_value_string(v, buf, n);
+    else strlcpy(buf, "?", n);
+    t_guard = NULL;
+}
+
 // Called from the response hook for keys with our prefix.
 static void query_collect(const u64 *keys, int nk, Il2CppObject **vals, int nv) {
     pthread_mutex_lock(&g_q.m);
@@ -790,7 +803,7 @@ static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h
     char val[512], cc[16];
     for (int i = 0; i < nk; i++) {
         fourcc_string(key_get(keys[i]), cc);
-        if (i < nv) typed_value_string(vals[i], val, sizeof val);
+        if (i < nv) string_guarded(vals[i], val, sizeof val);
         else strlcpy(val, "?", sizeof val);
         tap_printf("  %016llx %s gen=%u = %s\n", keys[i], cc, i < ng ? gens[i] : 0, val);
     }
