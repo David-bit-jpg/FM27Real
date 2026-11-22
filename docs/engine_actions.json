@@ -1,0 +1,1451 @@
+{
+ "GAME_FEEDBACK_ACTION": {
+  "codes": [
+   "TiPO",
+   "esPO",
+   "mtPO",
+   "fsPO",
+   "ktPO",
+   "dcPO",
+   "G5EB",
+   "Gi4o",
+   "NYOf",
+   "ik Z",
+   " e4E"
+  ]
+ },
+ "CLUB_AFFILIATED_CLUB_LINK_ACTION": {
+  "codes": [
+   "Fu3D"
+  ]
+ },
+ "CLUB_FINANCE_LINK_ACTION": {
+  "codes": [
+   "DD5z"
+  ]
+ },
+ "CLUB_PICK_AS_FAVOURITE_ACTION": {
+  "codes": [
+   "h3Cd",
+   "fmer"
+  ]
+ },
+ "CLUB_REQUEST_AFFILIATE_LINK_ACTION": {
+  "codes": [
+   "ltti",
+   "wRJI"
+  ]
+ },
+ "CLUB_REQUEST_SENIOR_AFFILIATE_LINK_ACTION": {
+  "codes": [
+   "ltti",
+   "wbnP"
+  ]
+ },
+ "CLUB_REQUEST_INCREASE_BUDGETS_ACTION": {
+  "codes": [
+   "ltti",
+   "nEIY"
+  ]
+ },
+ "CLUB_REQUEST_MANAGER_NEW_CONTRACT_ACTION": {
+  "codes": [
+   "ltti",
+   "a7i5"
+  ]
+ },
+ "MAKE_BOARD_REQUEST_ACTION": {
+  "codes": [
+   "ePWM"
+  ]
+ },
+ "PLACE_JOB_ADVERT_ACTION": {
+  "codes": [
+   "caAJ",
+   "daaJ",
+   "iacJ",
+   "ianJ",
+   "6Lt4"
+  ]
+ },
+ "CLUB_VIEW_ADVICE_ACTION": {
+  "codes": [
+   "Lqbc"
+  ]
+ },
+ "COMPETITION_AWARDS_LINK_ACTION": {
+  "codes": [
+   "9Sag"
+  ]
+ },
+ "COMPETITION_FIXTURES_LINK_ACTION": {
+  "codes": [
+   "pX m"
+  ]
+ },
+ "COMPETITION_PLAYER_STATS_LINK_ACTION": {
+  "codes": [
+   "1d1l"
+  ]
+ },
+ "COMPETITION_TEAM_STATS_LINK_ACTION": {
+  "codes": [
+   "quat"
+  ]
+ },
+ "COMPETITION_TRANSFER_RUMOURS_LINK_ACTION": {
+  "codes": [
+   "DSkE"
+  ]
+ },
+ "EDITOR_ACTION": {
+  "codes": [
+   "to1I"
+  ]
+ },
+ "NEWS_LINK_ACTION": {
+  "codes": [
+   "XYp9"
+  ]
+ },
+ "OBJECT_LINK_ACTION": {
+  "codes": [
+   "EDAN",
+   "klsi"
+  ]
+ },
+ "TEAM_SQUAD_LINK_ACTION": {
+  "codes": [
+   "niuH",
+   "rKMy"
+  ]
+ },
+ "SCOUT_TEAM_ACTION": {
+  "codes": [
+   "mtgS",
+   "StdS",
+   "erlA",
+   "slcS",
+   "mtdS",
+   "g7GL"
+  ]
+ },
+ "ADD_NON_PLAYERS_TO_SHORTLIST_ACTION": {
+  "codes": [
+   "Hj1x",
+   "tssw"
+  ]
+ },
+ "ADD_OWN_PLAYER_PRESS_PRAISE_TO_CURRENT_TOP_TARGET_ACTION": {
+  "codes": [
+   "aToT",
+   "5iCb"
+  ]
+ },
+ "ADD_PLAYERS_AS_TRANSFER_TARGETS_ACTION": {
+  "codes": [
+   "9nXI",
+   "gttP"
+  ]
+ },
+ "ADD_PLAYERS_TO_CLUB_SQUAD_PLANNER_ACTION": {
+  "codes": [
+   "SiTu",
+   "PqSp",
+   "TPPS",
+   "staP",
+   "xIcT",
+   "HwYw",
+   "DIts"
+  ]
+ },
+ "ADD_PLAYERS_TO_NATION_SQUAD_PLANNER_ACTION": {
+  "codes": [
+   "SiTu",
+   "PqSp",
+   "staP",
+   "TPPS",
+   "xIcT",
+   "IonQ",
+   "DIts"
+  ]
+ },
+ "ADD_PLAYERS_TO_CLUB_DISCARD_LIST_ACTION": {
+  "codes": [
+   "gPmz"
+  ]
+ },
+ "ADD_PLAYERS_TO_NATION_SHORTLIST_ACTION": {
+  "codes": [
+   "KWUo"
+  ]
+ },
+ "ADD_PLAYERS_TO_SHORTLIST_ACTION": {
+  "codes": [
+   "eXjA",
+   "tssw"
+  ]
+ },
+ "ALLOW_PLAYER_AN_ABSENCE_OF_LEAVE_ACTION": {
+  "codes": [
+   "VqHE"
+  ]
+ },
+ "APPLY_FOR_ALL_JOBS_ACTION": {
+  "codes": [
+   "CKUO"
+  ]
+ },
+ "APPLY_FOR_WORK_PERMIT_ACTION": {
+  "codes": [
+   "wdpW",
+   "ccpW",
+   "ICjs"
+  ]
+ },
+ "APPROACH_TO_SIGN_ACTION": {
+  "codes": [
+   "pfLh",
+   "gAoN",
+   "pmip"
+  ]
+ },
+ "ASK_AGENT_ABOUT_CLIENT_CONTRACT_RENEWAL_ACTION": {
+  "codes": [
+   "ltti",
+   "xo2p"
+  ]
+ },
+ "ASK_AGENT_TO_OFFER_CLIENT_TO_CLUBS_ACTION": {
+  "codes": [
+   "ltti",
+   "PVdT"
+  ]
+ },
+ "ASK_FOR_CONFIRMATION_ACTION": {
+  "codes": [
+   "HPNx"
+  ]
+ },
+ "ASK_INTERMEDIARIES_TO_OFFER_PLAYER_TO_CLUBS_ACTION": {
+  "codes": [
+   "lCnZ"
+  ]
+ },
+ "ASK_NOT_TO_RETIRE_ACTION": {
+  "codes": [
+   "j7cv"
+  ]
+ },
+ "ASK_PLAYER_AGENT_ABOUT_CLIENT_AVAILABILITY_ACTION": {
+  "codes": [
+   "j03w",
+   "ltti"
+  ]
+ },
+ "ASK_PLAYER_AGENT_ABOUT_GENERATE_MARKET_INTEREST_ACTION": {
+  "codes": [
+   "lpiV",
+   "ltti"
+  ]
+ },
+ "ASK_TO_RECONSIDER_INT_RETIREMENT_ACTION": {
+  "codes": [
+   "bE4C"
+  ]
+ },
+ "ASSIGN_PERSON_CONTRACT_RENEWAL_HANDLING_ACTION": {
+  "codes": [
+   "asip",
+   "rcap",
+   " v5O",
+   "rcmp"
+  ]
+ },
+ "AUTO_EXTEND_PERSON_CONTRACT_ACTION": {
+  "codes": [
+   "yenp",
+   "WzR6"
+  ]
+ },
+ "BUY_DOWN_MLS_PLAYER_SALARY_CAP_IMPACT_ACTION": {
+  "codes": [
+   "ErJw"
+  ]
+ },
+ "CALL_BACK_FROM_TRAINING_REST_ACTION": {
+  "codes": [
+   " w9w"
+  ]
+ },
+ "CALL_UP_TO_NATIONAL_SQUAD_ACTION": {
+  "codes": [
+   "pnca",
+   "iXoV",
+   "n8j9",
+   "TtcA",
+   "eJvQ"
+  ]
+ },
+ "CHANGE_HUMAN_TEAM_ACTION": {
+  "codes": [
+   "Jd9P"
+  ]
+ },
+ "CHANGE_PLAYER_TRANSFER_OFFER_ACTION": {
+  "codes": [
+   "NB8M",
+   "pmip"
+  ]
+ },
+ "CHANGE_PLAYERS_CLUB_SQUAD_ACTION": {
+  "codes": [
+   "sils",
+   "sssc",
+   "gjgZ"
+  ]
+ },
+ "CLAIM_PLAYERS_FROM_WAIVER_LIST_ACTION": {
+  "codes": [
+   "Eeh6",
+   "pmip"
+  ]
+ },
+ "PERSON_COACH_REPORTS_LINK_ACTION": {
+  "codes": [
+   "xP4R"
+  ]
+ },
+ "COACHING_COURSE_ACTION": {
+  "codes": [
+   "pgGq"
+  ]
+ },
+ "COMMIT_TO_NATION_ACTION": {
+  "codes": [
+   "n8j9",
+   "TtcA",
+   "eJvQ"
+  ]
+ },
+ "COMPARE_PLAYER_ACTION": {
+  "codes": [
+   "psnh",
+   "psch",
+   "mCHx",
+   "ytcp"
+  ]
+ },
+ "COMPARE_STAFF_ACTION": {
+  "codes": [
+   "pais",
+   "psnh",
+   "EATf",
+   "psch"
+  ]
+ },
+ "CONVERT_PLAYER_BACK_TO_DP_ACTION": {
+  "codes": [
+   "aDt3"
+  ]
+ },
+ "CREATE_FILTER_FROM_PLAYER_ACTION": {
+  "codes": [
+   "TRes",
+   "PB0V"
+  ]
+ },
+ "CREATE_FILTER_FROM_STAFF_ACTION": {
+  "codes": [
+   "xXs "
+  ]
+ },
+ "DECLARE_TRANSFER_INTEREST_IN_PLAYER_ACTION": {
+  "codes": [
+   "trdc",
+   "tsdc",
+   "ildc",
+   "itdc",
+   "ttdc",
+   "Mz4p"
+  ]
+ },
+ "DISCARD_SCOUT_REPORT_ACTION": {
+  "codes": [
+   "jpDH"
+  ]
+ },
+ "DISCIPLINE_PLAYER_ACTION": {
+  "codes": [
+   "aarf",
+   "tmAF",
+   "M9 z"
+  ]
+ },
+ "HUMAN_EDIT_MANAGER_ACTION": {
+  "codes": [
+   "eGru"
+  ]
+ },
+ "MAKE_OFFER_TO_PLAYER_ACTION": {
+  "codes": [
+   "xBAs",
+   " tQF",
+   "slmn",
+   "pmip"
+  ]
+ },
+ "ENQUIRE_ACTION": {
+  "codes": [
+   "otgo",
+   " tQF",
+   "pmip",
+   "slmn"
+  ]
+ },
+ "GET_PLAYERS_INTERNATIONAL_MATCH_REPORT_ACTION": {
+  "codes": [
+   "Lp g"
+  ]
+ },
+ "GO_ON_HOLIDAY_ACTION": {
+  "codes": [
+   "Elgf"
+  ]
+ },
+ "IMMEDIATE_TRANSFER_ACTION": {
+  "codes": [
+   "lVpD",
+   "rPsA",
+   "Zyn0"
+  ]
+ },
+ "INTERNAL_OFFER_FOR_TRADES_ACTION": {
+  "codes": [
+   "35So",
+   "pmip"
+  ]
+ },
+ "KEEP_RETIRED_PERSON_DATA_ACTION": {
+  "codes": [
+   "kJQd"
+  ]
+ },
+ "KEEP_SCOUT_REPORT_ACTION": {
+  "codes": [
+   "YI1q"
+  ]
+ },
+ "LEADERSHIP_COURSE_ACTION": {
+  "codes": [
+   "iJQM"
+  ]
+ },
+ "LOAN_FOR_ONE_MATCH_ACTION": {
+  "codes": [
+   "IpLC",
+   "VLmt"
+  ]
+ },
+ "LOAN_PLAYER_FEEDBACK_ACTION": {
+  "codes": [
+   "ltti",
+   "vL2C"
+  ]
+ },
+ "MAKE_BUY_BACK_OFFER_ACTION": {
+  "codes": [
+   "wvwH",
+   "pmip"
+  ]
+ },
+ "MAKE_PLAYER_CAPTAIN_ACTION": {
+  "codes": [
+   " hjP"
+  ]
+ },
+ "MAKE_PLAYER_VICE_CAPTAIN_ACTION": {
+  "codes": [
+   "wNJ8"
+  ]
+ },
+ "MAKE_PLAYERS_AVAILABLE_FOR_RESERVES_ACTION": {
+  "codes": [
+   "TcIs",
+   "mTlP",
+   "TTRa",
+   "TRPa",
+   "MNPa",
+   "KGsi",
+   "Fmta",
+   "FRPa",
+   "faTR",
+   "FTra",
+   "jD7J"
+  ]
+ },
+ "MLS_ROSTER_CHAT_CONVERSATION_ACTION": {
+  "codes": [
+   "Fy Z",
+   "ltti"
+  ]
+ },
+ "MOVE_NON_PLAYERS_TO_CLUB_SHORTLIST_ACTION": {
+  "codes": [
+   "H337",
+   "tssw"
+  ]
+ },
+ "MOVE_PLAYERS_TO_AFFILIATES_ACTION": {
+  "codes": [
+   "tsif",
+   "munp",
+   "slaa",
+   "09ZP"
+  ]
+ },
+ "MOVE_PLAYERS_TO_CLUB_SHORTLIST_ACTION": {
+  "codes": [
+   "LUNV",
+   "tssw"
+  ]
+ },
+ "MUTUAL_CONTRACT_TERMINATION_ACTION": {
+  "codes": [
+   "cift",
+   "plcs",
+   "ndHa"
+  ]
+ },
+ "PERSON_NATIONAL_REPORTS_LINK_ACTION": {
+  "codes": [
+   "oOrS"
+  ]
+ },
+ "NETWORK_GAME_OPTIONS_ACTION": {
+  "codes": [
+   "PkFI",
+   "OKBS",
+   "4TRU",
+   "dioc"
+  ]
+ },
+ "NICKNAME_ACTION": {
+  "codes": [
+   "ahin",
+   "ckSa",
+   "skSa",
+   "Z66M"
+  ]
+ },
+ "PLAYER_NOTIFY_UPCOMING_MATCH_FOR_INTERNATIONAL_MANAGER_ACTION": {
+  "codes": [
+   "galF",
+   "8Gh "
+  ]
+ },
+ "OFFER_CONTRACT_ACTION": {
+  "codes": [
+   "dF7w",
+   "tcri",
+   "gAoN",
+   "pmip"
+  ]
+ },
+ "OFFER_EXTEND_LOAN_ACTION": {
+  "codes": [
+   "WHci"
+  ]
+ },
+ "OFFER_STAFF_NATIONAL_JOB_ACTION": {
+  "codes": [
+   "pnca",
+   "n8j9",
+   "TtcA",
+   "eJvQ",
+   "ojnP"
+  ]
+ },
+ "OFFER_TO_CLUBS_ACTION": {
+  "codes": [
+   "stnU",
+   "ThnU",
+   "RcoP",
+   "lsip",
+   "n1ZW",
+   "BQ3a",
+   "ctoP",
+   "gvz4",
+   "kapE",
+   "pmip"
+  ]
+ },
+ "OFFER_TRIAL_ACTION": {
+  "codes": [
+   "LomC",
+   "luGh",
+   " tQF",
+   "slmn",
+   "pmip"
+  ]
+ },
+ "OFFER_VIRTUAL_CONTRACT_ACTION": {
+  "codes": [
+   "60hi"
+  ]
+ },
+ "BECOME_UNSACKABLE_ACTION": {
+  "codes": [
+   "1dqf"
+  ]
+ },
+ "PERSON_FREEZE_ATTRIBUTES_ACTION": {
+  "codes": [
+   "BOcg"
+  ]
+ },
+ "PERSON_HAS_WORK_PERMIT_ACTION": {
+  "codes": [
+   "wnQ6"
+  ]
+ },
+ "PERSON_TERMINATE_CONTRACT_ACTION": {
+  "codes": [
+   "qsme",
+   "cncP",
+   "noiP"
+  ]
+ },
+ "PERSON_TERMINATE_NATION_CONTRACT_ACTION": {
+  "codes": [
+   "tCnT",
+   "cncP"
+  ]
+ },
+ "PLAYER_CANCEL_FUTURE_TRANSFER_ACTION": {
+  "codes": [
+   "w Ox"
+  ]
+ },
+ "PLAYER_REMOVE_ALL_UNHAPPINESS_ACTION": {
+  "codes": [
+   "O30E"
+  ]
+ },
+ "PLAYER_REMOVE_ALL_INJURIES_ACTION": {
+  "codes": [
+   "ZnKI"
+  ]
+ },
+ "PLAYER_REMOVE_ALL_BANS_ACTION": {
+  "codes": [
+   "oXoI"
+  ]
+ },
+ "PLAYER_MAXIMISE_TACTICAL_UNDERSTANDING_ACTION": {
+  "codes": [
+   "UtMP"
+  ]
+ },
+ "MOVE_TO_MY_TEAM_ACTION": {
+  "codes": [
+   "vszC",
+   "tpiP"
+  ]
+ },
+ "MOVE_TO_OTHER_TEAM_ACTION": {
+  "codes": [
+   "HRKs"
+  ]
+ },
+ "MOVE_TO_MY_TEAM_ON_LOAN_ACTION": {
+  "codes": [
+   "2tVi"
+  ]
+ },
+ "MOVE_TO_OTHER_TEAM_ON_LOAN_ACTION": {
+  "codes": [
+   "kOzw"
+  ]
+ },
+ "MOVE_TO_OTHER_NATIONAL_TEAM_ACTION": {
+  "codes": [
+   "qbeW"
+  ]
+ },
+ "MOVE_TO_MY_NATIONAL_TEAM_ACTION": {
+  "codes": [
+   "oGhr"
+  ]
+ },
+ "PERSUADE_PLAYER_AGENT_TO_DISREGARD_FAILED_CONTRACT_NEGOTIATIONS_ACTION": {
+  "codes": [
+   "ltti",
+   "zB0W"
+  ]
+ },
+ "PICK_PLAYER_FROM_DRAFT_ACTION": {
+  "codes": [
+   "DFsi",
+   "cspd",
+   "gdub",
+   "TMTB",
+   "lpdp",
+   "aspd"
+  ]
+ },
+ "PLACE_MLS_PLAYER_ON_INJURY_LIST_ACTION": {
+  "codes": [
+   "lldp",
+   "ulSw"
+  ]
+ },
+ "PLAYER_ADVICE_ACTION": {
+  "codes": [
+   "ltti",
+   "cXYS"
+  ]
+ },
+ "PLAYER_REDUCE_WAGE_DEMANDS_ACTION": {
+  "codes": [
+   "ltti",
+   "DQ y"
+  ]
+ },
+ "PLAYER_AMBASSADORIAL_ACTION": {
+  "codes": [
+   "ltti",
+   "HBGC"
+  ]
+ },
+ "PLAYER_ASK_STAFF_TO_SUGGEST_PLAYER_TRAIT_TRAINING_ACTION": {
+  "codes": [
+   "bqKK"
+  ]
+ },
+ "PLAYER_ATTEND_NEXT_MATCH_ACTION": {
+  "codes": [
+   "wiUQ",
+   "EFtA"
+  ]
+ },
+ "PLAYER_CONCERNED_ACTION": {
+  "codes": [
+   "dnCl",
+   "ltti",
+   "Q5QD"
+  ]
+ },
+ "PLAYER_NATIONAL_TEAM_TRAINING_INTENSITY_ACTION": {
+  "codes": [
+   "iTIp",
+   "3Yed",
+   "aTIp"
+  ]
+ },
+ "PLAYER_TRAINING_FOCUS_ACTION": {
+  "codes": [
+   "tpti",
+   "xkAl",
+   "fwti",
+   "fwtc"
+  ]
+ },
+ "PLAYER_TRAINING_INTENSITY_REST_ACTION": {
+  "codes": [
+   "atni",
+   "mhih",
+   "t9c5",
+   "rrdp",
+   "dRTP",
+   "sLpp",
+   "dHTP",
+   "aTIp",
+   "RITp"
+  ]
+ },
+ "PLAYER_TRAINING_NEW_POSITION_ACTION": {
+  "codes": [
+   "poBk"
+  ]
+ },
+ "PLAYER_TRAINING_PREFERRED_MOVE_ACTION": {
+  "codes": [
+   "camp",
+   "RmmP",
+   "fwti",
+   "itmp",
+   "fwtc",
+   "AmmP",
+   "VIT6"
+  ]
+ },
+ "PLAYER_UNHAPPINESS_RELATED_TEAM_MEETINGS_ACTION": {
+  "codes": [
+   "LMSp",
+   "LMOp",
+   "ltti",
+   "y7QE"
+  ]
+ },
+ "PRAISE_PLAYER_PERFORMANCE_ACTION": {
+  "codes": [
+   "ltti",
+   "DMmZ"
+  ]
+ },
+ "PRAISE_PLAYER_TRAINING_DEVELOPMENT_ACTION": {
+  "codes": [
+   "ltti",
+   "D2Rk"
+  ]
+ },
+ "PRAISE_PLAYER_LOAN_SPELL_ACTION": {
+  "codes": [
+   "ltti",
+   "kn3N"
+  ]
+ },
+ "PRAISE_PLAYER_CONDUCT_ACTION": {
+  "codes": [
+   "XzS9",
+   "ltti"
+  ]
+ },
+ "PRAISE_PLAYER_INTERNATIONAL_ACTION": {
+  "codes": [
+   "ltti",
+   "XStB"
+  ]
+ },
+ "PRIVATE_NATIONAL_CONVERSATION_ACTION": {
+  "codes": [
+   "ltti",
+   "QzAi"
+  ]
+ },
+ "PROMOTE_CLUB_TO_ANOTHER_PLAYER_BY_TALKING_WITH_THE_PRESS_ACTION": {
+  "codes": [
+   "lmNr",
+   "ltti"
+  ]
+ },
+ "RECALL_PLAYER_FROM_HOLIDAY_ACTION": {
+  "codes": [
+   "Ou06"
+  ]
+ },
+ "RECALL_PLAYER_FROM_LOAN_ACTION": {
+  "codes": [
+   "RLtC",
+   "lcer",
+   "4vPr"
+  ]
+ },
+ "RELEASE_FROM_CLUB_CONTRACT_ACTION": {
+  "codes": [
+   "cbcg",
+   "tgla",
+   "dgpd",
+   "cwfp",
+   "atsp",
+   "fatf",
+   "papa",
+   "wpgp",
+   "plcs",
+   "G8iH"
+  ]
+ },
+ "RELEASE_FROM_NATION_CONTRACT_ACTION": {
+  "codes": [
+   "resc",
+   "apj1"
+  ]
+ },
+ "REMOVE_NON_PLAYERS_FROM_SHORTLIST_ACTION": {
+  "codes": [
+   "vX7k"
+  ]
+ },
+ "REMOVE_PLAYERS_FROM_TRANSFER_TARGETS_ACTION": {
+  "codes": [
+   "GqHN"
+  ]
+ },
+ "REMOVE_PLAYERS_FROM_CLUB_DISCARD_LIST_ACTION": {
+  "codes": [
+   "dmaI"
+  ]
+ },
+ "REMOVE_PLAYERS_FROM_NATIONAL_TEAM_DISCARD_LIST_ACTION": {
+  "codes": [
+   "8o60"
+  ]
+ },
+ "REMOVE_PLAYERS_FROM_LOAN_LIST_ACTION": {
+  "codes": [
+   " Aj3"
+  ]
+ },
+ "REMOVE_PLAYERS_FROM_NATION_SHORTLIST_ACTION": {
+  "codes": [
+   "wy22"
+  ]
+ },
+ "REMOVE_PLAYERS_FROM_SHORTLIST_ACTION": {
+  "codes": [
+   "JwlY",
+   "FaeT"
+  ]
+ },
+ "REMOVE_PLAYERS_FROM_TRANSFER_LIST_ACTION": {
+  "codes": [
+   "U3Q3"
+  ]
+ },
+ "REQUEST_INJURY_RISK_UPDATE_ACTION": {
+  "codes": [
+   "xmMp"
+  ]
+ },
+ "REQUEST_PHYSIO_REPORT_ACTION": {
+  "codes": [
+   "x oi"
+  ]
+ },
+ "REQUEST_TRAINING_REPORT_ACTION": {
+  "codes": [
+   "YT4d",
+   "Csil"
+  ]
+ },
+ "RESPOND_TO_PLAYER_AGENT_ABOUT_CLIENT_AVAILABILITY_ACTION": {
+  "codes": [
+   "SAKG",
+   "ltti"
+  ]
+ },
+ "REST_PLAYER_CONVERSATION_ACTION": {
+  "codes": [
+   "ltti",
+   "JQ7O"
+  ]
+ },
+ "REST_PLAYERS_FROM_TRAINING_ACTION": {
+  "codes": [
+   "u7sK"
+  ]
+ },
+ "RETIRE_ACTION": {
+  "codes": [
+   "tnmh",
+   "tcmh",
+   "ambi",
+   "VRnM",
+   "dtmb",
+   "ocsi",
+   "pytf"
+  ]
+ },
+ "PERSON_SCOUT_ASSIGNMENTS_LINK_ACTION": {
+  "codes": [
+   "hV n"
+  ]
+ },
+ "SCOUT_PLAYERS_CLUB_ACTION": {
+  "codes": []
+ },
+ "ASSIGN_SCOUT_TO_PLAYERS_CLUB_ACTION": {
+  "codes": [
+   "O9JQ"
+  ]
+ },
+ "SCOUT_PLAYERS_NATIONAL_ACTION": {
+  "codes": [
+   "v8IP"
+  ]
+ },
+ "SEND_ON_INTENSIVE_LANGUAGE_COURSE_ACTION": {
+  "codes": [
+   "lcli",
+   "icli",
+   "ECZ2"
+  ]
+ },
+ "SET_FOR_DOF_CONTRACT_RENEWAL_PLAYER_ACTION": {
+  "codes": [
+   "rFoD",
+   "AExl"
+  ]
+ },
+ "SET_FOR_RELEASE_PLAYER_ACTION": {
+  "codes": [
+   "S sM"
+  ]
+ },
+ "SET_INTERNATIONAL_INSTRUCTIONS_ACTION": {
+  "codes": [
+   "ions",
+   "imfs",
+   "sniP",
+   "mwiP",
+   "xAo0"
+  ]
+ },
+ "SET_PLAYERS_PLAYING_TIME_ACTION": {
+  "codes": [
+   "sPnU",
+   "PhnU",
+   "n1ZW",
+   "BQ3a",
+   "poqP",
+   "gvz4",
+   "CB7f"
+  ]
+ },
+ "SET_PLAYERS_TRANSFER_STATUS_ACTION": {
+  "codes": [
+   "slnU",
+   "poot",
+   "poql",
+   "stnU",
+   "poqt",
+   "ThnU",
+   "n1ZW",
+   "BQ3a",
+   "gvz4",
+   "9lQi"
+  ]
+ },
+ "SET_PREEMPTIVE_PLAYING_TIME_PATHWAY_TARGET_ACTION": {
+  "codes": [
+   "ltti",
+   "lBkX"
+  ]
+ },
+ "STOP_SCOUT_PLAYERS_CLUB_ACTION": {
+  "codes": [
+   "KRlG"
+  ]
+ },
+ "SUGGEST_NATIONAL_SQUAD_ACTION": {
+  "codes": [
+   "kmVx"
+  ]
+ },
+ "TALK_TO_INJURED_PLAYER_ACTION": {
+  "codes": [
+   "ltti",
+   "VaPu"
+  ]
+ },
+ "TALK_TO_OTHER_CLUB_MANAGER_ACTION": {
+  "codes": [
+   "ltti",
+   "IoKK"
+  ]
+ },
+ "TALK_TO_UNHAPPY_TEAMMATE_ACTION": {
+  "codes": [
+   "ltti",
+   "KRBk"
+  ]
+ },
+ "TERMINATE_TRIAL_ACTION": {
+  "codes": [
+   "srtt",
+   "pAsM"
+  ]
+ },
+ "TRIAL_UNTIL_FUTURE_TRANSFER_ACTION": {
+  "codes": [
+   "MMjy"
+  ]
+ },
+ "VIEW_PLAYER_TRANSFER_OFFERS_ACTION": {
+  "codes": [
+   "GAba",
+   "pmip"
+  ]
+ },
+ "PLAYER_VIEW_TRANSFER_CLAUSES_ACTION": {
+  "codes": [
+   "6llS"
+  ]
+ },
+ "WARN_PLAYER_REMOVE_CAPTAINCY_ACTION": {
+  "codes": [
+   "ltti",
+   "DTGN"
+  ]
+ },
+ "WARN_PLAYER_PERFORMANCE_ACTION": {
+  "codes": [
+   "zlid",
+   "ltti"
+  ]
+ },
+ "WARN_PLAYER_TRAINING_DEVELOPMENT_ACTION": {
+  "codes": [
+   "ltti",
+   "bfz "
+  ]
+ },
+ "WARN_PLAYER_LOAN_SPELL_ACTION": {
+  "codes": [
+   "ltti",
+   "drYC"
+  ]
+ },
+ "WARN_PLAYER_CONDUCT_ACTION": {
+  "codes": [
+   "EUgd",
+   "ltti"
+  ]
+ },
+ "WITHDRAW_CONTRACT_OFFER_ACTION": {
+  "codes": [
+   "AGWa"
+  ]
+ },
+ "WITHDRAW_PLAYER_TRANSFER_OFFER_ACTION": {
+  "codes": [
+   "olQt",
+   "pmip"
+  ]
+ },
+ "CREATE_NEW_RECRUITMENT_FOCUS_ACTION": {
+  "codes": [
+   "nHFR",
+   "CCwH"
+  ]
+ },
+ "TEAM_APPLY_FOR_JOB_ACTION": {
+  "codes": [
+   "HYgk"
+  ]
+ },
+ "TEAM_CHANGE_PRIMARY_TRAINED_TACTIC_ACTION": {
+  "codes": [
+   "Bri "
+  ]
+ },
+ "TEAM_DECLARE_INTEREST_ACTION": {
+  "codes": [
+   "ZHAv"
+  ]
+ },
+ "TEAM_EDIT_SCOUTING_RANGE_ACTION": {
+  "codes": [
+   "0cTh",
+   "qN1m",
+   "viPT",
+   "sccs"
+  ]
+ },
+ "TEAM_EXPORT_ACTION": {
+  "codes": [
+   "Euvf"
+  ]
+ },
+ "TEAM_HOLD_TEAM_MEETING_ACTION": {
+  "codes": [
+   "ltti",
+   "x6It"
+  ]
+ },
+ "TEAM_REMOVE_ALL_INJURIES_ACTION": {
+  "codes": [
+   "AmVM"
+  ]
+ },
+ "TEAM_REMOVE_ALL_BANS_ACTION": {
+  "codes": [
+   "QI06"
+  ]
+ },
+ "TEAM_REMOVE_ALL_UNHAPPINESS_ACTION": {
+  "codes": [
+   "laPk"
+  ]
+ },
+ "TEAM_IMPROVE_TEAM_COHESION_ACTION": {
+  "codes": [
+   "dR3f"
+  ]
+ },
+ "TEAM_MAXIMISE_TACTICAL_UNDERSTANDING_ACTION": {
+  "codes": [
+   "h5TU"
+  ]
+ },
+ "TEAM_CHANGE_ALL_MORALE_ACTION": {
+  "codes": [
+   "LYnC"
+  ]
+ },
+ "TEAM_PICK_AS_FAVOURITE_ACTION": {
+  "codes": [
+   "rHgW",
+   "fmer"
+  ]
+ },
+ "TEAM_PICK_FOR_FRIENDLY_ACTION": {
+  "codes": [
+   "ADAP"
+  ]
+ },
+ "TEAM_PROPOSE_FRIENDLY_ACTION": {
+  "codes": [
+   "O0IQ",
+   "FCcN",
+   "FNcN"
+  ]
+ },
+ "TEAM_RESOLVE_GROUP_UNHAPPINESS_ACTION": {
+  "codes": [
+   "crgp",
+   "pupp",
+   "ltti",
+   "NXU5"
+  ]
+ },
+ "TEAM_RESOLVE_PLAYER_CONCERNS_ACTION": {
+  "codes": [
+   "pcpp",
+   "cppp",
+   "ltti",
+   "N81j"
+  ]
+ },
+ "TEAM_SET_RECOMMENDED_MENTORING_GROUPS_ACTION": {
+  "codes": [
+   "gemH",
+   "BR1p"
+  ]
+ },
+ "TEAM_SET_RECOMMENDED_TRAINING_INTENSITY_ACTION": {
+  "codes": [
+   "RPrT",
+   "itcp",
+   "hstp",
+   "1oly",
+   "RITp"
+  ]
+ },
+ "TEAM_VIEW_TRAINING_PERFORMANCES_ACTION": {
+  "codes": [
+   "sRQ7",
+   "rRQ7",
+   "FvL4"
+  ]
+ },
+ "TEAM_CONTAINER_APPLY_FOR_JOB_ACTION": {
+  "codes": [
+   "AndF"
+  ]
+ },
+ "TEAM_CONTAINER_DECLARE_INTEREST_ACTION": {
+  "codes": [
+   "3lHY"
+  ]
+ },
+ "TEAM_CONTAINER_EDIT_RESPONSIBILITIES_ACTION": {
+  "codes": [
+   "DIGP",
+   "GEJh",
+   "KZ 9",
+   "fvAx"
+  ]
+ },
+ "TEAM_CONTAINER_EXPORT_ACTION": {
+  "codes": [
+   "apON"
+  ]
+ },
+ "TEAM_CONTAINER_ALLOW_LICENSED_KITS_ACTION": {
+  "codes": [
+   "JbZN"
+  ]
+ },
+ "TEAM_CONTAINER_ALLOW_SQUAD_REGISTRATION_ANYTIME_ACTION": {
+  "codes": [
+   "5RmW"
+  ]
+ },
+ "TEAM_CONTAINER_ALLOW_SQUAD_NUMBERS_ANYTIME_ACTION": {
+  "codes": [
+   "gV4m"
+  ]
+ },
+ "TEAM_CONTAINER_SHOW_ALL_PLAYERS_IN_SEARCH_ACTION": {
+  "codes": [
+   "ytsp",
+   "zpbi"
+  ]
+ },
+ "TEAM_CONTAINER_SHOW_ALL_STAFF_IN_SEARCH_ACTION": {
+  "codes": [
+   "ytsp",
+   "NxDu"
+  ]
+ },
+ "CLUB_REMOVE_BOARD_OBJECTIVE_ACTION": {
+  "codes": [
+   "aNv6"
+  ]
+ },
+ "CLUB_REMOVE_SUPPORTER_OBJECTIVE_ACTION": {
+  "codes": [
+   "IWhQ"
+  ]
+ },
+ "TEAM_CONTAINER_PICK_FOR_FRIENDLY_ACTION": {
+  "codes": [
+   "9wyn"
+  ]
+ },
+ "TEAM_CONTAINER_PROPOSE_FRIENDLY_ACTION": {
+  "codes": [
+   "GH8o"
+  ]
+ },
+ "PLACE_COACHING_JOB_ADVERT_ACTION": {
+  "codes": [
+   "caAJ",
+   "daaJ",
+   "iacJ",
+   "ianJ",
+   "lfNt"
+  ]
+ },
+ "PLACE_SCOUTING_JOB_ADVERT_ACTION": {
+  "codes": [
+   "caAJ",
+   "daaJ",
+   "iacJ",
+   "ianJ",
+   "8Efn"
+  ]
+ },
+ "PLACE_MEDICAL_JOB_ADVERT_ACTION": {
+  "codes": [
+   "caAJ",
+   "daaJ",
+   "iacJ",
+   "ianJ",
+   "5CLl"
+  ]
+ },
+ "CLUB_BUDGET_ADJUSTMENT_SCOUTING_ACTION": {
+  "codes": [
+   "RbSC",
+   "vljO"
+  ]
+ },
+ "CLUB_BUDGET_ADJUSTMENT_TRANSFERS_ACTION": {
+  "codes": [
+   "kbL5",
+   "RbSC"
+  ]
+ },
+ "CLUB_BUDGET_ADJUSTMENT_TRANSFERS_AND_WAGES_ACTION": {
+  "codes": [
+   "RbSC",
+   "ZVdp"
+  ]
+ },
+ "CLUB_BUDGET_ADJUSTMENT_WAGES_ACTION": {
+  "codes": [
+   "1eyJ",
+   "RbSC"
+  ]
+ },
+ "CLUB_MLS_ENQUIRY_LINK_ACTION": {
+  "codes": [
+   "BCmh",
+   "BCho",
+   "D8bh"
+  ]
+ },
+ "CLUB_MLS_TRADE_LINK_ACTION": {
+  "codes": [
+   "SdcP",
+   "BCmh",
+   "BCho",
+   "D8bh"
+  ]
+ },
+ "SELECT_CAPTAIN_ACTION": {
+  "codes": [
+   "aCsi",
+   "RACP",
+   "CCTs",
+   "qRUB"
+  ]
+ },
+ "SELECT_VICE_CAPTAIN_ACTION": {
+  "codes": [
+   "aCsi",
+   "RACP",
+   "KmB3",
+   "CCTs"
+  ]
+ },
+ "HUMAN_CLUB_RESIGN_ACTION": {
+  "codes": [
+   "ambi",
+   "dtmb",
+   "t1SG",
+   "bYer",
+   "ocsi",
+   "pytf"
+  ]
+ },
+ "HUMAN_NATION_RESIGN_ACTION": {
+  "codes": [
+   "ambi",
+   "dtmb",
+   "t1SG",
+   "bYer",
+   "ocsi",
+   "pytf"
+  ]
+ },
+ "MOVE_TO_CHILD_TEAM_AFFILIATE_ACTION": {
+  "codes": [
+   "tsif",
+   "munp",
+   "slaa",
+   "Abv1",
+   "09ZP"
+  ]
+ },
+ "PLAYER_FOOTEDNESS_TRAIT_TRAINING_ACTION": {
+  "codes": [
+   "camp",
+   "RmmP",
+   "fwti",
+   "itmp",
+   "fwtc",
+   "AmmP",
+   "zwPj"
+  ]
+ },
+ "PLAYER_QUICK_SCOUT_CLUB_ACTION": {
+  "codes": [
+   "ir58"
+  ]
+ },
+ "PLAYER_QUICK_SCOUT_NATION_ACTION": {
+  "codes": [
+   "KClH"
+  ]
+ },
+ "THREAD_CLOSURE_ACTION": {
+  "codes": []
+ },
+ "THREAD_ACTION": {
+  "codes": []
+ }
+}
