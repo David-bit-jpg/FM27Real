@@ -145,6 +145,11 @@ class SocialFeed:
         kind = raw.get("picture") or "none"
         p = (ev or {}).get("payload") or {}
         who = players.get(str(raw.get("picture_player") or "")) or {}
+        if ev and ev["kind"] == "upcoming" and kind in ("club", "result"):
+            return {"type": "matchday", "home": {"name": p.get("home_name"), "club_uid": self.club_uid(p.get("home"))},
+                    "away": {"name": p.get("away_name"), "club_uid": self.club_uid(p.get("away"))},
+                    "time": f"{p.get('date')} {p.get('time') or ''}".strip(), "competition": p.get("competition"),
+                    "odds": p.get("odds")}
         if kind == "result" and ev and ev["kind"] == "match":
             return {"type": "result", "home": {"name": p.get("home_name"), "club_uid": self.club_uid(p.get("home"))},
                     "away": {"name": p.get("away_name"), "club_uid": self.club_uid(p.get("away"))},
@@ -226,11 +231,13 @@ class SocialFeed:
         out = []
         done = {p.get("source") for p in self._all(career, 1000)} | {
             (e["payload"] or {}).get("source") for e in career.store.events("social_post_none", limit=500)}
-        for kind in ("match", "press_answer", "news"):
+        for kind in ("upcoming", "match", "press_answer", "news"):
             for e in career.store.events(kind, limit=40):
                 p = e["payload"] or {}
                 key = e.get("event_key") or f"{kind}:{e['game_date']}:{p.get('question', '')[:20]}"
                 if key in done or _age(career, e["game_date"]) > MAX_AGE_DAYS:
+                    continue
+                if kind == "upcoming" and _age(career, p.get("date")) > 0:  # the match has been played
                     continue
                 if (kind == "match" and not p.get("club")) or (kind == "press_answer" and not p.get("headline")) or \
                         (kind == "news" and ((p.get("weight") or 1) < 1.5 or p.get("origin") == "social")):
@@ -248,6 +255,14 @@ class SocialFeed:
     # --- context -----------------------------------------------------------------
     def _describe(self, ev: dict) -> str:
         p = ev["payload"]
+        if ev["kind"] == "upcoming":
+            line = (f"Upcoming match {p.get('date')} {p.get('time')}: {p.get('competition')} {p.get('home_name')} vs "
+                    f"{p.get('away_name')} (the manager's team plays {'at home' if p.get('we_home') else 'away'}).")
+            if p.get("odds"):
+                pr, o = p["prediction"], p["odds"]
+                line += (f" Pre-match prediction ({p.get('voters')}): home win {pr[0]}%, draw {pr[1]}%, away win {pr[2]}%."
+                         f" Bookmaker odds: home {o[0]}, draw {o[1]}, away {o[2]}.")
+            return line + f" Board: {p.get('board')} Fans: {p.get('fans')}"
         if ev["kind"] == "match":
             goals = "、".join(f"{g['name']} {g['minute']}" for g in p.get("goals") or [])
             ratings = "、".join(f"{self.story.name(r)} {v}" for r, v in sorted((p.get("ratings") or {}).items(),
@@ -259,6 +274,25 @@ class SocialFeed:
             return (f"Press conference {ev['date']}: asked 「{p.get('question')}」, the manager said 「{p.get('answer')}」. "
                     f"Headline: {p.get('headline')}")
         return f"News {ev['date']}: {p.get('title')}. {(p.get('body') or '')[:300]}"
+
+    def _extra(self, career: Career, ev: dict) -> str:
+        """Form before a match; fans' predictions and bets after it."""
+        if ev["kind"] == "upcoming":
+            form: dict[str, list] = {}
+            for m in career.store.events("match", limit=3):
+                for ref, r in ((m["payload"] or {}).get("ratings") or {}).items():
+                    form.setdefault(ref, []).append(r)
+            lines = [f"{p['name']} ({p['position']}): recent ratings "
+                     f"{', '.join(map(str, form.get(p['id'], []))) or 'did not play'}" for p in self.roster.at_club(career)]
+            return "\n\nOUR SQUAD AND FORM:\n" + "\n".join(f"- {x}" for x in lines)
+        if ev["kind"] == "match":
+            before = [c["text"] for post in self._all(career, 200)
+                      if str(post.get("source", "")).startswith(f"upcoming:{ev.get('date')}")
+                      for c in post.get("comments") or []][:10]
+            if before:
+                return ("\n\nWHAT FANS PREDICTED AND BET BEFORE THE MATCH (some won, some lost; they may gloat or moan):\n"
+                        + "\n".join(f"- {x}" for x in before))
+        return ""
 
     def _context(self, career: Career, players: dict[str, dict]) -> str:
         mine = [f"「{c['text']}」" for p in self._all(career, 60) for c in p.get("comments") or []
@@ -329,7 +363,14 @@ class SocialFeed:
                           f"usually one by the club or a media outlet with a picture, and posts by players involved "
                           f"(the player of the match, someone who played badly, a player in the news). Each post has "
                           f"4 to 8 comments from different people with different views.")
-                prompt = f"{self._context(career, players)}\n\nTHE EVENT:\n{self._describe(ev)}"
+                if ev["kind"] == "upcoming":
+                    system = (f"You write the Instagram buzz before {career.team_name}'s next match in the world of "
+                              f"Football Manager 27. {RULES.replace('{manager}', career.manager_name)} Write 1 or 2 "
+                              f"posts (a club matchday post, maybe a media preview; picture 'none' or 'club'), each "
+                              f"with 6 to 10 fan comments: who they want in the starting XI and why (real players, by "
+                              f"position and form), score predictions, betting picks and parlays using ONLY the odds "
+                              f"given (no other numbers), some @mentioning the manager with demands.")
+                prompt = f"{self._context(career, players)}\n\nTHE EVENT:\n{self._describe(ev)}{self._extra(career, ev)}"
                 try:
                     out = model.complete(system, prompt, EVENT_SCHEMA)
                 except ModelError:

@@ -87,6 +87,7 @@ class StoryEngine:
             return
         self.clock = clock
         self._news(career)
+        self._upcoming(career)
         # Matches: once per game day, and again when news arrives (results come with news).
         if self.matches_checked != (career.key, career.date) or self.new_news:
             self.new_news = False
@@ -169,6 +170,33 @@ class StoryEngine:
                         "likes": p.get("737f") if isinstance(p.get("737f"), int) else 0,
                         "links": _links(p.get("6OW7"))})
         return out
+
+    # --- the next match ------------------------------------------------------------------
+    def _upcoming(self, career: Career) -> None:
+        """The manager's next fixture, once it is two days away or less: an "upcoming" event with FM's
+        pre-match prediction (fans' and pundits' vote) turned into bookmaker-style odds."""
+        nxt = self.bridge.query(career.manager_id, ["wlCt"]).get("wlCt")
+        target = nxt.get("target") if isinstance(nxt, dict) else None
+        if not target:
+            return
+        v = self.bridge.query_target(target, ["etdf", "okxf", "Tmhf", "Twaf", "poNF", "YrdQ", "shxf", "GZyQ"])
+        date = v.get("etdf") if isinstance(v.get("etdf"), str) else None
+        if not date or str(v.get("shxf") or "").strip().isdigit() or self._age_days(career, date) < -2:
+            return
+        home, away = _ref(v.get("Tmhf")), _ref(v.get("Twaf"))
+        vote = (v.get("YrdQ") or {}).get("props") or {}
+        probs = [vote.get(k) for k in ("7 Ip", "Zedg", "bHZz")]
+        odds = None
+        if all(isinstance(p, (int, float)) and p > 0 for p in probs):
+            odds = [round(min(15.0, 100 / p * 0.93), 2) for p in probs]  # with a bookmaker's margin
+        exp = (v.get("GZyQ") or {}).get("props") or {}
+        payload = {"home": home, "away": away, "home_name": self.name(home), "away_name": self.name(away),
+                   "date": date, "time": clean(v.get("okxf")), "competition": clean(v.get("poNF")),
+                   "we_home": home == career.team_id, "prediction": probs if odds else None, "odds": odds,
+                   "voters": clean(vote.get("xHFU")), "board": clean(exp.get("M1bl")).replace("club#1", ""),
+                   "fans": clean(exp.get("AgLy")), "weight": 1.2}
+        key = "upcoming:%s:%s:%s" % (date, home, away)
+        career.store.add_event("upcoming", career.date, payload, event_key=key)
 
     # --- matches -----------------------------------------------------------------
     def _fixtures(self, squad: list[str]) -> dict[tuple, str]:
