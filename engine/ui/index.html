@@ -580,7 +580,8 @@ async function showSocial(skipRefresh) {
     input.disabled = true; input.value = t("sending");
     if (!body.key) {  // my own post shows at once, before the answers are written
       const feed = main.querySelector(".feed"), mine = el("div", { class: "post" },
-        el("div", { class: "head" }, authorAvatar({ kind: "manager", name: "我" }), el("div", { class: "who" }, el("span", { class: "nm me" }, t("me")))),
+        el("div", { class: "head" }, authorAvatar({ kind: "manager", name: (data.me || {}).name || t("me"), uid: (data.me || {}).uid }),
+          el("div", { class: "who" }, el("span", { class: "nm me" }, (data.me || {}).name || t("me")))),
         el("div", { class: "cap" }, el("span", { class: "tx" }, text)));
       const anchor = feed && feed.querySelector(".post");
       if (feed) anchor ? feed.insertBefore(mine, anchor) : feed.append(mine);

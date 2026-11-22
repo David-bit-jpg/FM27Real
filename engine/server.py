@@ -220,6 +220,7 @@ def make_handler(engine: Engine):
                     return self._json(200, {"posts": engine.social.posts(career), "fan_mood": engine.social.fan_mood(career),
                                             "pending": len(engine.social.pending(career)),
                                             "notifications": engine.social.notifications(career),
+                                            "me": {"name": career.manager_name, "uid": career.manager_uid},
                                             "people": [{"id": p["id"], "name": p["name"]} for p in engine.roster.players(career)]})
                 if method == "POST" and path == "/api/social/seen":
                     engine.social.mark_seen(engine.careers.current())

@@ -212,11 +212,14 @@ class SocialFeed:
         """What the manager can see now (answers appear only once their game time has come)."""
         now = clock(career)
         out = []
-        for p in self._all(career):
+        for i, p in enumerate(self._all(career)):
             if not _visible(p, now):
                 continue
-            out.append(p | {"comments": [c for c in p.get("comments") or [] if _visible(c, now)]})
-        out.sort(key=lambda p: (p.get("posted") or p["date"] or "", p.get("likes") or 0), reverse=True)
+            out.append(p | {"comments": [c for c in p.get("comments") or [] if _visible(c, now)], "_i": i})
+        # newest game day first; within a day the manager's own posts on top, then the most recently written
+        out.sort(key=lambda p: (p["date"] or "", p["author"].get("kind") == "manager", p["_i"]), reverse=True)
+        for p in out:
+            p.pop("_i", None)
         return out[:limit]
 
     def notifications(self, career: Career) -> list[dict]:
