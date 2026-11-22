@@ -124,3 +124,11 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
   target (e.g. another SpeakTo kind with a borrowed key) can crash the game inside its engine.
 - Value encoding runs under a fault guard (tap.c encode_guarded): an unreadable object costs that one
   value (null), not the game.
+
+## Player statistics (confirmed against FM's stats page, 2026-11-21)
+
+- Season row (person `0HgJ`): `pAvo` apps, `oGvo` goals, `sAaO` assists, `RAvo` average rating, `WOVM` xG,
+  `gSgI` xA, `CTzM` pass completion %, `QE2w` shots on target %, `COj0`/`ouS8` headers won / %,
+  `2nyA`/`rbpf` tackles won / %, `V8eK` fouls per 90. Not reliable: `1xSW`, `cgr `, `2FCz`.
+- Last-five rows (XkGV): `oGvo` goals, `sAaO` assists, `WOVM` xG, `l75x` goals conceded, `e9UE` saves,
+  `AB5g` rating, `RuDI`/`tOWU` minute subbed off/on.

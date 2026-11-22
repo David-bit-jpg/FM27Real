@@ -85,6 +85,7 @@ def build_system(snap: dict, career: Career, canon: list[dict], memories: list[d
         f"Career stage: {snap.get('career_stage')}" if snap.get("career_stage") else None,
         f"Fitness: {snap.get('fitness')}" if snap.get("fitness") else None,
         f"Average rating this season: {snap.get('average_rating'):.2f}" if isinstance(snap.get("average_rating"), float) else None,
+        f"Your season statistics: {snap.get('season')}" if snap.get("season") else None,
         f"Contract: {snap.get('contract_status')}" if snap.get("contract_status") else None,
         f"Playing time: {snap.get('playing_time_feeling')}" if snap.get("playing_time_feeling") else None,
         f"Trained at: {snap.get('trained_at')}" if snap.get("trained_at") else None,

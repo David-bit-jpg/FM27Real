@@ -26,6 +26,7 @@ from __future__ import annotations
 from .bridge import Bridge, BridgeUnavailable, _text
 from .career import Career
 from .fmvalue import target_pairs
+from .stats import match_row
 
 FORM_FIELDS = ("ZaLo", "E2cn", "phIw")  # a player's last-five-matches form (different competitions)
 FIXTURE_FIELDS = ["etdf", "Tmhf", "Twaf", "shxf", "saxf", "srxf", "poNF", "kT1 ", "zKyn", "6dsa", "LmjO"]
@@ -171,8 +172,10 @@ class StoryEngine:
 
     # --- matches -----------------------------------------------------------------
     def _fixtures(self, squad: list[str]) -> dict[tuple, str]:
-        """Finished fixtures our players appear in: (date, home, away) -> target."""
+        """Finished fixtures our players appear in: (date, home, away) -> target.
+        Each player's stats in each of them are kept in self.match_stats[key][player]."""
         out: dict[tuple, str] = {}
+        self.match_stats: dict[tuple, dict] = {}
         for ref in squad:
             raw = self.bridge.query(ref, list(FORM_FIELDS))
             for field in FORM_FIELDS:
@@ -183,6 +186,7 @@ class StoryEngine:
                     key = (pairs.get("etdf"), pairs.get("Tmhf"), pairs.get("Twaf"))
                     if target and None not in key:
                         out.setdefault(key, target)
+                        self.match_stats.setdefault(key, {})[ref] = match_row(row.get("props") or {})
         return out
 
     def _matches(self, career: Career) -> None:
@@ -196,9 +200,11 @@ class StoryEngine:
             v = self.bridge.query_target(target, FIXTURE_FIELDS)
             if not str(v.get("shxf") or "").strip().isdigit():  # not played yet
                 continue
-            self._record_match(career, set(squad), event_key, v)
+            self._record_match(career, set(squad), event_key, v, self.match_stats.get(key, {}))
 
-    def _record_match(self, career: Career, squad: set[str], event_key: str, v: dict) -> None:
+    def _record_match(self, career: Career, squad: set[str], event_key: str, v: dict,
+                      stats: dict | None = None) -> None:
+        stats = stats or {}
         store = career.store
         date = v.get("etdf") if isinstance(v.get("etdf"), str) else career.date
         home, away = _ref(v.get("Tmhf")), _ref(v.get("Twaf"))
@@ -244,7 +250,8 @@ class StoryEngine:
             "score": [hg, ag], "competition": comp, "club": club, "we_home": club and we == "home",
             "result": result_for(we) if club else None,
             "goals": goal_list, "player_of_match": best, "player_of_match_name": self.name(best),
-            "ratings": {r: ratings[r] for r in played}, "weight": weight,
+            "ratings": {r: ratings[r] for r in played}, "stats": {r: stats[r] for r in played if r in stats},
+            "weight": weight,
         }
         if not store.add_event("match" if club else "match_other", date, payload, event_key=event_key):
             return
@@ -261,6 +268,11 @@ class StoryEngine:
             mine = result_for(side[ref])
             head = f"{line}，球队{mine}" if club else f"他代表{self.name(home if side[ref] == 'home' else away)}出战，{line}，{mine}"
             parts = [f"他出场，评分 {rating:.1f}"]
+            st = stats.get(ref) or {}
+            if st.get("saves") or st.get("conceded"):  # goalkeepers
+                parts.append(f"扑救 {int(st.get('saves') or 0)} 次，失 {int(st.get('conceded') or 0)} 球")
+            elif (st.get("xg") or 0) >= 0.3:
+                parts.append(f"预期进球 {st['xg']:.2f}")
             w = 1.0
             if ref in goals:
                 n = len(goals[ref])

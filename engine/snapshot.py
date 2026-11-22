@@ -20,6 +20,12 @@ def build(bridge: Bridge, person_id: str) -> dict:
             snap["role"], snap["outlet"] = "journalist", bridge.name(media["ref"])
     except Exception:
         pass
+    if not snap.get("role"):
+        try:
+            from .stats import season
+            snap["season"] = season(bridge, person_id)
+        except Exception:
+            pass
     team_id = snap.get("team")
     if isinstance(team_id, str):
         snap["team_name"] = bridge.name(team_id)

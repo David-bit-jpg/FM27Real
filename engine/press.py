@@ -29,6 +29,7 @@ from .career import Career
 from .fmvalue import speak_choice
 from .model import ModelError, Provider
 from .native import NativeSync, TONES
+from .stats import season
 
 MAX_FOLLOW_UPS = 1   # at most one follow-up per question, and only when the answer dodges
 
@@ -156,7 +157,8 @@ class PressRoom:
         for ref in about[:3]:
             name = self.bridge.name(ref)
             recent = [m["text"] for m in store.memories(ref)[-4:] if m.get("kind") in ("match", "news", "press")]
-            player_lines.append(f"{name}: " + " / ".join(recent) if recent else name)
+            numbers = season(self.bridge, ref)
+            player_lines.append(f"{name}: " + " / ".join([numbers] + recent if numbers else recent) if (recent or numbers) else name)
         said = [f"[{e['game_date']}] {e['payload'].get('journalist', {}).get('outlet', '')}问「{e['payload'].get('question')}」"
                 f"，主教练答「{e['payload'].get('answer')}」" for e in store.events("press_answer", limit=6)]
         with_me = [m["text"] for m in mem.recall(store.memories(cur["person"]), career.date, n=5)]
