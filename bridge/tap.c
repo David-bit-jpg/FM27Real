@@ -9,6 +9,8 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <pthread.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -533,6 +535,57 @@ static void query_step(void) {
     pthread_mutex_unlock(&g_q.m);
 }
 
+// --- fault guard ------------------------------------------------------------------
+// Reading FM's values goes through objects we do not own. If one turns out to be
+// unreadable, the fault must cost that one value, never the game: while a value
+// is encoded, SIGSEGV/SIGBUS jump back and the value becomes null. Outside the
+// guarded section the previous handlers (Unity's) run as before.
+static struct sigaction g_old_segv, g_old_bus;
+static __thread sigjmp_buf *t_guard;
+static volatile int g_faults;
+
+static void fault_handler(int sig, siginfo_t *info, void *ctx) {
+    if (t_guard) {
+        sigjmp_buf *b = t_guard;
+        t_guard = NULL;
+        g_faults++;
+        siglongjmp(*b, 1);
+    }
+    struct sigaction *old = sig == SIGBUS ? &g_old_bus : &g_old_segv;
+    if (old->sa_flags & SA_SIGINFO) {
+        if (old->sa_sigaction) { old->sa_sigaction(sig, info, ctx); return; }
+    } else if (old->sa_handler != SIG_DFL && old->sa_handler != SIG_IGN) {
+        old->sa_handler(sig);
+        return;
+    }
+    sigaction(sig, old, NULL);  // default action: let the fault happen again unhandled
+}
+
+static void install_fault_guard(void) {
+    struct sigaction sa = {0};
+    sa.sa_sigaction = fault_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, &g_old_segv);
+    sigaction(SIGBUS, &sa, &g_old_bus);
+}
+
+static char *encode_guarded(Il2CppObject *v) {
+    static __thread JsonBuf j;
+    sigjmp_buf here;
+    memset(&j, 0, sizeof j);
+    if (sigsetjmp(here, 1)) {  // a fault while encoding: drop this value
+        free(j.data);
+        memset(&j, 0, sizeof j);
+        log_line("tap: unreadable value skipped (%d so far)", g_faults);
+        return strdup("null");
+    }
+    t_guard = &here;
+    encode_value(&j, v, 0);
+    t_guard = NULL;
+    return j.data ? j.data : strdup("null");
+}
+
 // Called from the response hook for keys with our prefix.
 static void query_collect(const u64 *keys, int nk, Il2CppObject **vals, int nv) {
     pthread_mutex_lock(&g_q.m);
@@ -540,11 +593,10 @@ static void query_collect(const u64 *keys, int nk, Il2CppObject **vals, int nv) 
         if (!is_ours(keys[i]) || ((keys[i] >> 32) & 0x7fff) != (g_q.id & 0x7fff)) continue;
         int idx = (int)(keys[i] & 0xffffffff);
         if (idx < 0 || idx >= g_q.n || g_q.state != 2) continue;
-        JsonBuf j = {0};
-        encode_value(&j, vals[i], 0);
+        char *json = encode_guarded(vals[i]);
         if (!g_q.values[idx]) g_q.received++;
         free(g_q.values[idx]);
-        g_q.values[idx] = j.data;
+        g_q.values[idx] = json;
         g_q.quiet = 0;
     }
     pthread_mutex_unlock(&g_q.m);
@@ -1082,6 +1134,7 @@ void tap_install(void) {
         return;
     }
 
+    install_fault_guard();
     g_tap = data_file("tap.log", "w");
     int n = patch_vtable(receiver, response, (void *)hook_response, &g_orig_response);
     n += patch_vtable(receiver, event, (void *)hook_event, &g_orig_event);

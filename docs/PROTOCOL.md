@@ -117,3 +117,10 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
 - Live session: PressConferenceEditSessionReference (target type 81, last_target): `gM8V` journalists present
   (InteractionPersonAndBodyLanguage: `srep` person, `s1P2` body language), `85GP` current journalist,
   `U0DX` manager body language. Journalist outlet: person `SdeM` (MediaSourceReference, `eman`).
+
+## Safety notes
+
+- Only query targets the interface itself opened (last_target, values the game returned). A hand-made
+  target (e.g. another SpeakTo kind with a borrowed key) can crash the game inside its engine.
+- Value encoding runs under a fault guard (tap.c encode_guarded): an unreadable object costs that one
+  value (null), not the game.
