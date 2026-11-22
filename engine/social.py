@@ -337,7 +337,9 @@ class SocialFeed:
                    default="")
         if last and _age(career, last) < LIFE_POST_DAYS or not players:
             return 0
-        name = random.choice(list(players))
+        recent = {p["author"]["name"] for p in self._all(career) if p["author"]["kind"] == "player"
+                  and _age(career, p.get("date")) <= LIFE_POST_DAYS}
+        name = random.choice([n for n in players if n not in recent] or list(players))
         canon = career.store.canon(players[name]["ref"])
         memories = [m["text"] for m in career.store.memories(players[name]["ref"])[-4:]]
         system = (f"You write one Instagram post by {name}, a player at {career.team_name}, about his everyday life "
