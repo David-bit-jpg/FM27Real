@@ -40,13 +40,14 @@ from .contacts import ContactEngine
 from .social import SocialFeed
 from .squad import Roster
 from .groups import Groups
+from .edits import GameEdits
 from . import graphics
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
 SETTINGS_FILE = DATA_DIR / "settings.json"
 UI_DIR = Path(__file__).resolve().parent / "ui"
-SETTING_KEYS = ("language", "provider", "api_key", "model", "base_url")
+SETTING_KEYS = ("language", "provider", "api_key", "model", "base_url", "game_edits")
 
 
 # --- settings ----------------------------------------------------------------------
@@ -73,6 +74,7 @@ def save_settings(s: dict) -> None:
 def public_settings(s: dict) -> dict:
     """Settings as shown to the panel: the key only as a hint."""
     out = {k: s.get(k) for k in SETTING_KEYS if k != "api_key"}
+    out["game_edits"] = s.get("game_edits", True)
     key = s.get("api_key") or ""
     out["api_key_set"] = bool(key)
     out["api_key_hint"] = f"{key[:6]}…{key[-4:]}" if len(key) > 12 else ("…" if key else "")
@@ -86,6 +88,8 @@ def merge_settings(base: dict, body: dict) -> dict:
     for k in ("language", "provider", "model", "base_url"):
         if k in body and body[k] is not None:
             s[k] = str(body[k]).strip()
+    if "game_edits" in body:
+        s["game_edits"] = bool(body["game_edits"])
     if "api_key" in body:
         if body["api_key"] is None:
             s.pop("api_key", None)
@@ -113,6 +117,8 @@ class Engine:
         self.contacts = ContactEngine(self.story, self.roster)
         self.social = SocialFeed(self.story, self.roster)
         self.groups = Groups(self.bridge)
+        self.edits = GameEdits(self.bridge)
+        self.edits_clock: tuple | None = None
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
@@ -255,6 +261,17 @@ def make_handler(engine: Engine):
                                                                              text, engine.settings["language"])})
                     except ModelError as e:
                         return self._json(502, {"error": str(e), "code": "model"})
+                if method == "POST" and path == "/api/edits/test":  # a visible +1 to the manager's reputation
+                    career = engine.careers.current()
+                    career.store.add_event("edit_plan", career.date, {
+                        "record": career.manager_id, "name": career.manager_name, "kind": "person", "field": "当前声望",
+                        "delta": 1, "reason": "测试修改", "status": "pending"}, event_key=f"edit:test:{career.clock}")
+                    return self._json(200, {"queued": True})
+                if method == "GET" and path == "/api/edits":
+                    career = engine.careers.current()
+                    return self._json(200, {"enabled": engine.settings.get("game_edits", True),
+                                            "log": engine.edits.log(career),
+                                            "pending": [e["payload"] for e in engine.edits.pending(career)]})
                 if method == "GET" and path == "/api/inbox":
                     return self._inbox()
                 if method == "POST" and path == "/api/inbox/open":
@@ -463,6 +480,12 @@ def background(engine: Engine, interval: float = 3.0) -> None:
             career = engine.careers.current()
             engine.story.poll(career)
             engine.contacts.poll(career)
+            if engine.settings.get("game_edits", True):  # real changes through FM's In-Game Editor
+                engine.edits.plan(career, engine.roster)
+                clock = (career.key, career.clock)
+                if clock != engine.edits_clock:  # only when the game advanced
+                    engine.edits_clock = clock
+                    engine.edits.run(career, busy=bool(engine.native.current))
             if career.store.get_meta("forgotten_on") != career.date:  # once a game day
                 from . import memory as mem
                 mem.forget(career.store, career.date)

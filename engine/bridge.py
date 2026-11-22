@@ -171,6 +171,35 @@ class Bridge:
         except urllib.error.HTTPError:
             return False
 
+    # --- the In-Game Editor (needs the IGE add-on; see docs/PROTOCOL.md) ---------------
+    def editor_open(self, record: str, kind: str = "person") -> bool:
+        try:
+            return self._get(f"/editor/open?record={record}&kind={kind}", timeout=20).get("result") == 1
+        except urllib.error.HTTPError:
+            return False
+
+    def editor_fields(self) -> dict[str, dict]:
+        """Fields on screen by label (zero-width spaces removed): {label: {value, key}}."""
+        return {f["label"].replace("\u200b", ""): f for f in self._get("/editor")}
+
+    def editor_set(self, key: str, data_hex: str) -> bool:
+        try:
+            return bool(self._get(f"/editor/set?key={key}&data={data_hex}", timeout=20).get("written"))
+        except urllib.error.HTTPError:
+            return False
+
+    def editor_close(self) -> bool:
+        try:
+            return self._get("/editor/close", timeout=20).get("result") == 1
+        except urllib.error.HTTPError:
+            return False
+
+    def ui_click(self, text: str) -> bool:
+        try:
+            return self._get("/ui/click?click=1&text=" + urllib.parse.quote(text), timeout=60).get("result") == 1
+        except urllib.error.HTTPError:
+            return False
+
     def last_target(self, record_type: int) -> str | None:
         """The most recent target the interface opened for a record type (" 011" value)."""
         return self._get(f"/target?type={record_type}").get("target")
