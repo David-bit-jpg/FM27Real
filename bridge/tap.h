@@ -65,3 +65,8 @@ int tap_editor_close(int dry);
 // The In-Game Editor's selected tab (IGEModule.m_index): read (set 0) or set it.
 // Returns the index, or < 0 on failure.
 int tap_editor_tab(int set, int index);
+
+// FM's own UI: finds text elements showing exactly `text` (logs where they are) and,
+// with click, clicks match `nth` (negative counts from the end). Returns the number
+// of matches (find) or 1 (clicked); < 0 on failure.
+int tap_ui_click(const char *text, int click, int nth);

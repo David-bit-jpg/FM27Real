@@ -1353,6 +1353,127 @@ static int ige_tab_main(int set, int value) {
     return value;
 }
 
+// --- clicking FM's own UI (Unity UI Toolkit) ----------------------------------------
+// Finds text elements whose visible text equals a given text (zero-width spaces
+// ignored) in every UIDocument, and clicks one: a ClickEvent sent to the element
+// (it bubbles to its handlers) and, when an ancestor has a Clickable, that
+// Clickable's SimulateSingleClick. Main thread, fault-guarded.
+static const MethodInfo *method_up(Il2CppClass *k, const char *name, int argc) {
+    for (; k; k = il2cpp_class_get_parent(k)) {
+        const MethodInfo *m = method_with_params(k, name, argc);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+static Il2CppObject *call0(Il2CppObject *obj, const char *name) {
+    const MethodInfo *m = obj ? method_up(il2cpp_object_get_class(obj), name, 0) : NULL;
+    Il2CppException *exc = NULL;
+    Il2CppObject *r = m ? il2cpp_runtime_invoke(m, obj, NULL, &exc) : NULL;
+    return exc ? NULL : r;
+}
+
+static int same_text(Il2CppString *s, const char *want) {
+    char buf[256], clean[256];
+    if (!s) return 0;
+    il2cpp_utf8(s, buf, sizeof buf);
+    size_t o = 0;
+    for (const char *p = buf; *p && o < sizeof clean - 1;) {
+        if ((unsigned char)p[0] == 0xE2 && (unsigned char)p[1] == 0x80 && (unsigned char)p[2] == 0x8B) { p += 3; continue; }
+        clean[o++] = *p++;
+    }
+    clean[o] = 0;
+    return !strcmp(clean, want);
+}
+
+static struct { Il2CppClass *text_k; const MethodInfo *child_count, *element_at; Il2CppObject *found[32]; int nfound; } g_ui;
+
+static void ui_walk(Il2CppObject *ve, const char *want, int depth) {
+    if (!ve || depth > 60 || g_ui.nfound >= 32) return;
+    Il2CppClass *k = il2cpp_object_get_class(ve);
+    if (g_ui.text_k && derives_from(k, g_ui.text_k)) {
+        Il2CppObject *s = call0(ve, "get_text");
+        if (same_text((Il2CppString *)s, want)) g_ui.found[g_ui.nfound++] = ve;
+    }
+    Il2CppException *exc = NULL;
+    Il2CppObject *boxed = il2cpp_runtime_invoke(g_ui.child_count, ve, NULL, &exc);
+    int32_t n = 0;
+    if (!boxed || exc || !safe_read((uint8_t *)boxed + 0x10, &n, 4)) return;
+    for (int32_t i = 0; i < n && i < 2000; i++) {
+        void *args[1] = {&i};
+        exc = NULL;
+        Il2CppObject *child = il2cpp_runtime_invoke(g_ui.element_at, ve, args, &exc);
+        if (!exc && child) ui_walk(child, want, depth + 1);
+    }
+}
+
+static char g_ui_text[128];
+static int g_ui_click, g_ui_nth;
+
+static int ui_main(void) {
+    Il2CppClass *doc_k = il2cpp_find_class("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "UIDocument");
+    Il2CppClass *ve_k = il2cpp_find_class("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "VisualElement");
+    g_ui.text_k = il2cpp_find_class("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "TextElement");
+    g_ui.child_count = method_up(ve_k, "get_childCount", 0);
+    g_ui.element_at = method_up(ve_k, "ElementAt", 1);
+    Il2CppClass *resources_k = il2cpp_find_class("UnityEngine.CoreModule.dll", "UnityEngine", "Resources");
+    const MethodInfo *find_all = method_with_params(resources_k, "FindObjectsOfTypeAll", 1);
+    if (!doc_k || !ve_k || !g_ui.text_k || !g_ui.child_count || !g_ui.element_at || !find_all) { log_line("ui: classes/methods missing"); return -2; }
+    Il2CppException *exc = NULL;
+    void *fargs[1] = {il2cpp_type_get_object(il2cpp_class_get_type(doc_k))};
+    Il2CppObject *arr = il2cpp_runtime_invoke(find_all, NULL, fargs, &exc);
+    uint64_t ndocs = 0;
+    if (!arr || exc || !safe_read((uint8_t *)arr + 0x18, &ndocs, 8)) return -3;
+    g_ui.nfound = 0;
+    for (uint64_t d = 0; d < ndocs && d < 64; d++) {
+        Il2CppObject *doc = NULL;
+        safe_read((uint8_t *)arr + 0x20 + 8 * d, &doc, sizeof doc);
+        ui_walk(call0(doc, "get_rootVisualElement"), g_ui_text, 0);
+    }
+    for (int i = 0; i < g_ui.nfound; i++) {  // log where each match sits (its ancestors' names)
+        char path[512] = "";
+        Il2CppObject *e = g_ui.found[i];
+        for (int up = 0; e && up < 8; up++, e = call0(e, "get_parent")) {
+            char nm[64] = "";
+            Il2CppObject *s = call0(e, "get_name");
+            if (s) il2cpp_utf8((Il2CppString *)s, nm, sizeof nm);
+            strlcat(path, nm[0] ? nm : il2cpp_class_get_name(il2cpp_object_get_class(e)), sizeof path);
+            strlcat(path, " < ", sizeof path);
+        }
+        log_line("ui: match %d: %s", i, path);
+    }
+    if (!g_ui_click || !g_ui.nfound) return g_ui.nfound;
+    int pick = g_ui_nth < 0 ? g_ui.nfound + g_ui_nth : g_ui_nth;
+    if (pick < 0 || pick >= g_ui.nfound) return -4;
+    Il2CppObject *target = g_ui.found[pick];
+    Il2CppClass *click_k = il2cpp_find_class("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "ClickEvent");
+    const MethodInfo *pooled = method_up(click_k, "GetPooled", 0);
+    exc = NULL;
+    Il2CppObject *evt = pooled ? il2cpp_runtime_invoke(pooled, NULL, NULL, &exc) : NULL;
+    if (evt && !exc) {
+        const MethodInfo *set_target = method_up(il2cpp_object_get_class(evt), "set_target", 1);
+        const MethodInfo *send = method_up(il2cpp_object_get_class(target), "SendEvent", 1);
+        void *a1[1] = {target};
+        if (set_target) il2cpp_runtime_invoke(set_target, evt, a1, &exc);
+        void *a2[1] = {evt};
+        if (send && !exc) il2cpp_runtime_invoke(send, target, a2, &exc);
+        log_line("ui: ClickEvent sent to match %d%s", pick, exc ? " (threw)" : "");
+    }
+    for (Il2CppObject *e = target; e; e = call0(e, "get_parent")) {  // a Clickable (buttons, tabs)
+        Il2CppObject *clickable = call0(e, "get_clickable");
+        if (!clickable) continue;
+        const MethodInfo *sim = method_up(il2cpp_object_get_class(clickable), "SimulateSingleClick", 2);
+        exc = NULL;
+        Il2CppObject *evt2 = pooled ? il2cpp_runtime_invoke(pooled, NULL, NULL, &exc) : NULL;
+        int32_t delay = 0;
+        void *a3[2] = {evt2, &delay};
+        if (sim && evt2 && !exc) il2cpp_runtime_invoke(sim, clickable, a3, &exc);
+        log_line("ui: Clickable.SimulateSingleClick%s", exc ? " threw" : "");
+        break;
+    }
+    return 1;
+}
+
 static void ige_step(void) {
     pthread_mutex_lock(&g_ige.m);
     if (g_ige.pending) {
@@ -1362,7 +1483,7 @@ static void ige_step(void) {
             log_line("ige: fault while opening the editor");
         } else {
             t_guard = &here;
-            g_ige.result = g_ige.op >= 3 ? ige_tab_main(g_ige.op == 4, g_ige.index)
+            g_ige.result = g_ige.op == 5 ? ui_main() : g_ige.op >= 3 ? ige_tab_main(g_ige.op == 4, g_ige.index)
                          : g_ige.op ? ige_close_main(g_ige.op == 1) : ige_open_main(g_ige.record, g_ige.kind);
             t_guard = NULL;
         }
@@ -1397,6 +1518,12 @@ static int ige_run(uint32_t record, const char *kind, int op) {
 int tap_editor_open(uint32_t record, const char *kind) { return ige_run(record, kind, 0); }
 int tap_editor_close(int dry) { return ige_run(0, "", dry ? 1 : 2); }
 int tap_editor_tab(int set, int index) { g_ige.index = index; return ige_run(0, "", set ? 4 : 3); }
+int tap_ui_click(const char *text, int click, int nth) {
+    strlcpy(g_ui_text, text, sizeof g_ui_text);
+    g_ui_click = click;
+    g_ui_nth = nth;
+    return ige_run(0, "", 5);
+}
 
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     g_orig_tick(a, b, c, d, e, f, g, h);
@@ -1548,6 +1675,7 @@ char *tap_editor_json(void) { return strdup("[]"); }
 int tap_editor_open(uint32_t record, const char *kind) { (void)record; (void)kind; return 0; }
 int tap_editor_close(int dry) { (void)dry; return 0; }
 int tap_editor_tab(int set, int index) { (void)set; (void)index; return 0; }
+int tap_ui_click(const char *text, int click, int nth) { (void)text; (void)click; (void)nth; return 0; }
 int tap_editor_set(uint64_t key, const uint8_t *d, int dl) { (void)key; (void)d; (void)dl; return 0; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }

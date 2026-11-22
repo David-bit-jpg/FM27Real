@@ -204,6 +204,17 @@ static void handle(int fd) {
         respond(fd, r >= 0 ? 200 : 503, body);
         return;
     }
+    if (!strcmp(target, "/ui/click")) {
+        char text[128] = "", click[8] = "", nth[16] = "-1";
+        if (!query || !param(query, "text", text, sizeof text)) { respond(fd, 400, "{\"error\":\"text required\"}"); return; }
+        param(query, "click", click, sizeof click);
+        param(query, "nth", nth, sizeof nth);
+        int r = tap_ui_click(text, click[0] == '1', (int)strtol(nth, NULL, 10));
+        char body[64];
+        snprintf(body, sizeof body, "{\"result\":%d}", r);
+        respond(fd, r >= 0 ? 200 : 503, body);
+        return;
+    }
     if (!strcmp(target, "/editor/close")) {
         char dry[8] = "";
         if (query) param(query, "dry", dry, sizeof dry);
