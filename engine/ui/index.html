@@ -76,6 +76,7 @@
   .ok { color: var(--good); } .bad { color: var(--bad); }
   .empty { color: var(--muted); padding: 30px 14px; text-align: center; }
 
+  body.pressmode .tabs, body.pressmode #back { display: none; }
   .press { display: flex; flex-direction: column; height: 100%; }
   .press-head { display: flex; gap: 12px; align-items: center; padding: 14px; border-bottom: 1px solid var(--line); }
   .press-head .name { font-size: 16px; font-weight: 650; }
@@ -123,7 +124,7 @@
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
   zh: { phone: "主教练手机", messages: "消息", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
-        pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
+        pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
         potm: "全场最佳", scorers: "进球", showAll: "显示全部收件箱", showImportant: "只看重要的", results: { "赢了": "胜", "输了": "负", "打平": "平" }, settings: "设置", recent: "最近聊天", squad: "一线队",
         noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
         typing: "正在输入…", failed: "没发出去", retry: "重发", typingSpoken: "正在想怎么回答…", fmTalk: "FM 谈话",
@@ -134,7 +135,7 @@ const T = {
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
   en: { phone: "Manager's phone", messages: "Messages", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
-        pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
+        pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
         potm: "Player of the match", scorers: "Goals", showAll: "Show whole inbox", showImportant: "Important only", results: { "赢了": "W", "输了": "L", "打平": "D" }, settings: "Settings", recent: "Recent", squad: "First team",
         noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
         typing: "typing…", failed: "Not sent", retry: "Retry", typingSpoken: "is thinking…", fmTalk: "FM conversation",
@@ -187,6 +188,7 @@ function banner(text, isErr) {
 }
 
 function setHeader(title, showBack) {
+  document.body.classList.toggle("pressmode", view === "press");
   $("title").textContent = title;
   $("back").hidden = !showBack;
   $("tab-home").textContent = t("messages"); $("tab-settings").textContent = t("settings"); $("tab-feed").textContent = t("feed");
@@ -256,7 +258,10 @@ async function openPress() {
     if (view !== "press") { clearInterval(pressTimer); pressTimer = null; return; }
     let s;
     try { s = await api("/api/press"); } catch (e) { return; }
-    if (!s.active) { return; }
+    if (!s.active) {  // between questions (or handed to FM's options): stay here, never jump elsewhere
+      if (pressKey !== "waiting") { pressKey = "waiting"; main.replaceChildren(el("div", { class: "empty" }, t("pressNext"))); }
+      return;
+    }
     const key = s.journalist.id + "|" + s.original;
     const q = main.querySelector(".q");
     if (key === pressKey && q) {  // same question: only update the question text once it is ready

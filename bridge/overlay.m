@@ -229,8 +229,16 @@ static void open_panel(uint32_t person) {
     set_visible(YES);
 }
 
+static void post_engine(NSString *path);
+static BOOL g_press_was_active;
 static void chat_clicked(id self, SEL _cmd, id sender) {
     (void)self; (void)_cmd; (void)sender;
+    if (g_press_mode) {  // back to typing for this press question
+        post_engine(@"/api/press/resume");
+        g_chat_button.hidden = YES;
+        g_press_was_active = NO;  // the next poll shows the panel again
+        return;
+    }
     open_panel(g_focus);
 }
 
@@ -246,8 +254,26 @@ static void set_button_title(NSString *title) {
 
 // Looks up the focused person's name for the button, off the main thread
 // (queries wait for the game's main thread, so they must not run on it).
+static uint32_t g_manager;  // the human manager (no chat button on his own profile)
 static void load_focus(uint32_t person) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        if (!g_manager) {
+            static const uint8_t game[] = {0x01, 0x20, 0x30, 0x31, 0x31, 0x36, 0x00, 0x00, 0x00};
+            uint32_t mprops[1] = {0x4743754d /* MuCG */};
+            char *mj = tap_query_target(game, sizeof game, mprops, 1);
+            if (mj) {
+                NSDictionary *d = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:mj length:strlen(mj)]
+                                                                  options:0 error:nil];
+                free(mj);
+                id m = [d isKindOfClass:NSDictionary.class] ? d[@"MuCG"] : nil;
+                if ([m isKindOfClass:NSDictionary.class] && [m[@"ref"] isKindOfClass:NSString.class])
+                    g_manager = (uint32_t)strtoul([m[@"ref"] UTF8String], NULL, 16);
+            }
+        }
+        if (person == g_manager) {
+            dispatch_async(dispatch_get_main_queue(), ^{ if (g_focus == person) g_chat_button.hidden = YES; });
+            return;
+        }
         uint32_t props[1] = {0x6e616d65 /* eman */};
         char *json = tap_query(person, props, 1);
         NSString *name = nil;
@@ -267,11 +293,12 @@ static void load_focus(uint32_t person) {
 }
 
 static void poll_focus(void) {
+    if (g_press_mode) return;  // the button belongs to the press conference meanwhile
     uint32_t p = tap_focus(0x01);
     if (p == g_focus) return;
     g_focus = p;
-    g_chat_button.hidden = !p || g_visible;
-    if (p) {
+    g_chat_button.hidden = !p || g_visible || p == g_manager;
+    if (p && p != g_manager) {
         set_button_title(@"💬 私聊");
         load_focus(p);
         log_line("overlay: profile of %08x", p);
@@ -279,28 +306,52 @@ static void poll_focus(void) {
 }
 
 // Press conferences: the engine says when a question is on screen; the panel then
-// covers FM's answer column so the manager types instead of clicking.
-static BOOL g_press_inflight;
-static void press_changed(BOOL active) {
+// covers FM's answer column so the manager types instead of clicking. Between
+// questions the panel stays put; press mode ends only after a few quiet seconds.
+// A question handed to FM's own options shows a button to go back to typing.
+static BOOL g_press_inflight, g_press_was_active;
+static int g_press_quiet;  // polls (1 s) with no press conference
+static void post_engine(NSString *path) {
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[g_engine_url stringByAppendingString:path]]];
+    req.HTTPMethod = @"POST";
+    req.HTTPBody = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [req setValue:g_engine_token forHTTPHeaderField:@"X-Token"];
+    [[NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        (void)d; (void)r; (void)e;
+    }] resume];
+}
+
+static void press_changed(BOOL active, BOOL dismissed) {
     NSView *host = g_panel.superview;
-    if (active && !g_press_mode) {
-        log_line("overlay: press conference question on screen");
-        g_press_mode = YES;
-        if (g_visible) g_panel.animator.frame = panel_frame(host, YES);
-        else g_panel.frame = panel_frame(host, NO);
-        if (g_ui_loaded) [g_web evaluateJavaScript:@"openPress()" completionHandler:nil];
-        else engine_load_query(@"&press=1");
-        set_visible(YES);
-        g_chat_button.hidden = YES;
-    } else if (!active && g_press_mode) {
-        set_visible(NO);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (g_visible) return;
-            g_press_mode = NO;
-            g_panel.frame = panel_frame(g_panel.superview, NO);
-            if (g_ui_loaded) [g_web evaluateJavaScript:@"openHome()" completionHandler:nil];
-        });
+    if (active || dismissed) {
+        g_press_quiet = 0;
+        if (!g_press_mode) {
+            log_line("overlay: press conference question on screen");
+            g_press_mode = YES;
+            g_focus = 0;
+            if (g_visible) g_panel.animator.frame = panel_frame(host, YES);
+            else g_panel.frame = panel_frame(host, NO);
+            if (g_ui_loaded) [g_web evaluateJavaScript:@"openPress()" completionHandler:nil];
+            else engine_load_query(@"&press=1");
+        }
+        if (active && !g_press_was_active) set_visible(YES);  // a new question: show (⌘J hides until the next)
+        if (dismissed && g_visible) set_visible(NO);
+        g_chat_button.hidden = !dismissed;
+        if (dismissed) set_button_title(@"✍️ 改为打字回答");
+        g_press_was_active = active;
+        return;
     }
+    g_press_was_active = NO;
+    if (!g_press_mode || ++g_press_quiet < 6) return;
+    g_press_mode = NO;
+    g_chat_button.hidden = YES;
+    set_visible(NO);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (g_visible || g_press_mode) return;
+        g_panel.frame = panel_frame(g_panel.superview, NO);
+        if (g_ui_loaded) [g_web evaluateJavaScript:@"openHome()" completionHandler:nil];
+    });
 }
 
 static void poll_press(void) {
@@ -312,11 +363,12 @@ static void poll_press(void) {
     req.timeoutInterval = 3;
     [[NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
         NSDictionary *j = (!e && d) ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
-        BOOL active = [j isKindOfClass:NSDictionary.class] && [j[@"active"] isEqual:@YES];
+        BOOL ok = [j isKindOfClass:NSDictionary.class];
+        BOOL active = ok && [j[@"active"] isEqual:@YES], dismissed = ok && [j[@"dismissed"] isEqual:@YES];
         (void)r;
         dispatch_async(dispatch_get_main_queue(), ^{
             g_press_inflight = NO;
-            press_changed(active);
+            press_changed(active, dismissed);
         });
     }] resume];
 }

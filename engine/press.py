@@ -30,7 +30,7 @@ from .fmvalue import speak_choice
 from .model import ModelError, Provider
 from .native import NativeSync, TONES
 
-MAX_FOLLOW_UPS = 2
+MAX_FOLLOW_UPS = 1   # at most one follow-up per question, and only when the answer dodges
 
 QUESTION_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["question"],
@@ -68,6 +68,7 @@ class PressRoom:
         self.busy = False
         self.error = ""
         self.journalists: dict[str, dict] = {}
+        self.conference: tuple[str, list[dict]] = ("", [])  # (dialog target, this conference's Q&As)
 
     # --- state -------------------------------------------------------------------
     def _sync(self) -> dict | None:
@@ -81,6 +82,25 @@ class PressRoom:
         with self.lock:
             cur = self._sync()
             return bool(cur) and self.key not in self.dismissed
+
+    def status(self) -> dict:
+        """For the in-game overlay: a question is on screen; it was handed to FM's options."""
+        with self.lock:
+            cur = self._sync()
+            return {"active": bool(cur) and self.key not in self.dismissed,
+                    "dismissed": bool(cur) and self.key in self.dismissed}
+
+    def resume(self) -> None:
+        with self.lock:
+            if self.key:
+                self.dismissed.discard(self.key)
+
+    def _asked_here(self, cur: dict) -> list[dict]:
+        target, items = self.conference
+        if target != cur.get("target"):
+            self.conference = (cur.get("target") or "", [])
+            return []
+        return items
 
     def journalist(self, person: str) -> dict:
         if person not in self.journalists:
@@ -124,6 +144,7 @@ class PressRoom:
         said = [f"[{e['game_date']}] {e['payload'].get('journalist', {}).get('outlet', '')}问「{e['payload'].get('question')}」"
                 f"，主教练答「{e['payload'].get('answer')}」" for e in store.events("press_answer", limit=6)]
         with_me = [m["text"] for m in mem.recall(store.memories(cur["person"]), career.date, n=5)]
+        here = [f"{x['outlet']}：「{x['question']}」→ 主教练：「{x['answer']}」" for x in self._asked_here(cur)]
         return f"""CLUB AND RECENT EVENTS:
 {_lines(story.recent_world(career))}
 
@@ -134,7 +155,10 @@ WHAT THE MANAGER SAID IN RECENT PRESS CONFERENCES:
 {_lines(said)}
 
 WHAT THIS JOURNALIST REMEMBERS ABOUT THE MANAGER:
-{_lines(with_me)}"""
+{_lines(with_me)}
+
+ALREADY ASKED AND ANSWERED IN THIS PRESS CONFERENCE (do not ask these again):
+{_lines(here)}"""
 
     def _rewrite(self, career: Career, model: Provider, cur: dict, j: dict, key: tuple) -> str | None:
         with self.lock:
@@ -152,6 +176,8 @@ word in the context or in the original question. If it is not there, do not ment
 CONFERENCES". If that section is empty, do not claim he said anything.
 - Do not count streaks or compute records yourself; only repeat ones stated in the context.
 - If the context offers nothing relevant, keep close to the original question and only sharpen the wording.
+- Do not repeat a question or angle already asked in this press conference; if the original question covers \
+the same ground, find a different angle within its subject.
 Keep the same subject as the original question. One or two sentences, in Simplified Chinese. A tabloid is \
 blunter than a broadsheet or broadcaster, but equally bound by the facts."""
             prompt = f"{self._context(career, cur, j)}\n\nORIGINAL QUESTION:\n{cur['question']}"
@@ -186,8 +212,9 @@ blunter than a broadsheet or broadcaster, but equally bound by the facts."""
             exchange = "\n".join(f"{'Journalist' if t['who'] == 'journalist' else 'Manager'}: {t['text']}" for t in thread)
             system = f"""You are {j['name']}, a football journalist for {j['outlet'] or 'a media outlet'}, \
 questioning {career.manager_name} ({career.team_name}) at a press conference. Today is {career.date}.
-- Decide whether to press with a follow-up: do so when the answer dodges, contradicts the facts or opens a \
-better story ({MAX_FOLLOW_UPS - asked} follow-up(s) left; with none left, follow_up must be false).
+- Follow up only if the manager clearly dodged the question or contradicted the facts; a clear answer, even a \
+short or unfriendly one, ends the question. Never press on a point already answered in this press conference. \
+({MAX_FOLLOW_UPS - asked} follow-up(s) left; with none left, follow_up must be false.)
 - reply: your follow-up question, or, when done, a short remark or a note of what you are writing (Simplified \
 Chinese, spoken, short). Only facts stated in the context, the question or the manager's own words; never \
 invent facts, records, streaks or quotes.
@@ -220,6 +247,9 @@ invent facts, records, streaks or quotes.
         option = r.get("option") if r.get("option") in cur["options"] else None
         if option is None:  # fall back to the neutral option, else any
             option = next((pid for pid, o in cur["options"].items() if o.get("tone") == 2), next(iter(cur["options"])))
+        with self.lock:
+            self._asked_here(cur).append({"outlet": j["outlet"] or j["name"], "question": question,
+                                          "answer": " ".join(t["text"] for t in thread if t["who"] == "manager")[:300]})
         sent = self._submit(cur, option)
         self._remember(career, cur, j, question, thread, cur["options"][option], r, sent)
         with self.lock:

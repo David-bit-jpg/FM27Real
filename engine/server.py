@@ -179,7 +179,10 @@ def make_handler(engine: Engine):
                 if method == "GET" and path == "/api/contacts":
                     return self._contacts()
                 if method == "GET" and path == "/api/press/active":
-                    return self._json(200, {"active": engine.press.active()})
+                    return self._json(200, engine.press.status())
+                if method == "POST" and path == "/api/press/resume":
+                    engine.press.resume()
+                    return self._json(200, {"ok": True})
                 if method == "GET" and path == "/api/press":
                     return self._press_state()
                 if method == "POST" and path == "/api/press/answer":
@@ -227,8 +230,14 @@ def make_handler(engine: Engine):
             squad = engine.squad(career)
             by_id = {p["id"]: p for p in squad}
             recent = []
+            journalists = {e["payload"]["id"]: e["payload"] for e in career.store.events("journalist", limit=500)
+                           if (e["payload"] or {}).get("id")}
             for person_id, last in career.store.recent_threads(20):
-                p = by_id.get(person_id) or {"id": person_id, "name": person_id, "position": "", "uid": None}
+                j = journalists.get(person_id)
+                p = by_id.get(person_id) or ({"id": person_id, "name": j.get("name") or person_id,
+                                              "position": f"记者 · {j.get('outlet')}" if j.get("outlet") else "记者",
+                                              "uid": j.get("uid")} if j else
+                                             {"id": person_id, "name": person_id, "position": "", "uid": None})
                 cached, _ = career.store.get_snapshot(person_id)
                 if cached and person_id not in by_id:
                     p = {"id": person_id, "name": cached.get("name"), "position": cached.get("position") or "",
