@@ -144,10 +144,16 @@ WHAT THIS JOURNALIST REMEMBERS ABOUT THE MANAGER:
         try:
             system = f"""You are {j['name']}, a football journalist for {j['outlet'] or 'a media outlet'}, at \
 {career.manager_name}'s press conference ({career.team_name}). Today is {career.date}.
-Rewrite the question below so it is sharp, specific and hard to dodge, the way a real reporter asks when there \
-is a story. Use only facts from the context (results, scores, ratings, scorers, news, what the manager said \
-before); never invent facts. Keep the same subject as the original question. One or two sentences, in \
-Simplified Chinese. A tabloid is blunter and more provocative than a broadsheet or broadcaster."""
+Rewrite the question below so it is pointed and specific, the way a real reporter asks.
+STRICT RULES ON FACTS:
+- Every fact you mention (a result, score, rating, run of form, injury, transfer, quote) must appear word for \
+word in the context or in the original question. If it is not there, do not mention it.
+- Never put words in the manager's mouth: quote him only from "WHAT THE MANAGER SAID IN RECENT PRESS \
+CONFERENCES". If that section is empty, do not claim he said anything.
+- Do not count streaks or compute records yourself; only repeat ones stated in the context.
+- If the context offers nothing relevant, keep close to the original question and only sharpen the wording.
+Keep the same subject as the original question. One or two sentences, in Simplified Chinese. A tabloid is \
+blunter than a broadsheet or broadcaster, but equally bound by the facts."""
             prompt = f"{self._context(career, cur, j)}\n\nORIGINAL QUESTION:\n{cur['question']}"
             q = str(model.complete(system, prompt, QUESTION_SCHEMA).get("question") or "").strip()[:400]
         except ModelError as e:
@@ -183,7 +189,8 @@ questioning {career.manager_name} ({career.team_name}) at a press conference. To
 - Decide whether to press with a follow-up: do so when the answer dodges, contradicts the facts or opens a \
 better story ({MAX_FOLLOW_UPS - asked} follow-up(s) left; with none left, follow_up must be false).
 - reply: your follow-up question, or, when done, a short remark or a note of what you are writing (Simplified \
-Chinese, spoken, short). Only facts from the context; never invent facts.
+Chinese, spoken, short). Only facts stated in the context, the question or the manager's own words; never \
+invent facts, records, streaks or quotes.
 - body_language: how you look while reacting, a short phrase in Simplified Chinese without a subject.
 - option: the id of FM's answer option whose tone and meaning are closest to everything the manager said.
 - memory: one sentence in Simplified Chinese, third person, what you will remember about the manager's answer.
