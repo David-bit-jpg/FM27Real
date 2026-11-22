@@ -115,3 +115,27 @@ def speak_choice(person: str, guid: int, option_id: int) -> str:
     body = (_code("h1J ") + ref + _code("Vpcz") + _int(-1) + _code("p3fs") + _int(option_id)
             + _code("pQuB") + b"\x01\x02" + struct.pack("<i", 0) + _code("vQuB") + empty + _code("tdca") + empty)
     return (b"\x01\x0a" + struct.pack("<I", 6) + body).hex()
+
+
+def _ref_record(record: str) -> bytes:
+    """{ferd: record} as actions carry their people/teams."""
+    v = int(record, 16)
+    v = v - (1 << 32) if v >= 1 << 31 else v
+    return b"\x01\x0a" + struct.pack("<I", 1) + _code("ferd") + b"\x01\x01" + struct.pack("<i", v)
+
+
+def action_target(guid: int, code: str) -> str:
+    """The action object an action event goes to: (' 011'=1, Guid, dica=<action code>)."""
+    pairs = [(" 011", 1), ("diuG", guid), ("dica", struct.unpack("<i", _code(code))[0])]
+    return (bytes([len(pairs)]) + b"".join(_code(c) + struct.pack("<i", v) for c, v in pairs)).hex()
+
+
+def action_data(team: str, npc: str, human: str, record: str, records: list[str], extra: dict | None = None) -> str:
+    """Data of an action event (event 44), byte for byte as the interface builds it:
+    {aetT: team, aCPN: npc, muhH: human manager, ferd: record, Lerd: [records], ...extra}."""
+    fields = [("aetT", _ref_record(team)), ("aCPN", _ref_record(npc)), ("muhH", _ref_record(human)),
+              ("ferd", _ref_record(record)),
+              ("Lerd", b"\x01\x0b" + struct.pack("<I", len(records)) + b"".join(_ref_record(r) for r in records))]
+    for k, v in (extra or {}).items():
+        fields.append((k, _int(v)))
+    return (b"\x01\x0a" + struct.pack("<I", len(fields)) + b"".join(_code(k) + v for k, v in fields)).hex()

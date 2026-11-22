@@ -934,8 +934,16 @@ static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
                 memset(g_open, 0, sizeof g_open);
                 pthread_mutex_unlock(&g_open_lock);
             }
-            if (code == CODE_011 && pairs == 3) g_record_type = val;
             if (code == CODE_FERD) { note_seen(val); record = val; }
+        }
+        // The record type comes only from database record targets (' 011', Guid, ferd):
+        // other 3-pair targets (e.g. action objects: ' 011', Guid, dica) must not change it.
+        if (pairs == 3 && tl >= 25) {
+            uint32_t c0, v0, c2;
+            memcpy(&c0, target + 1, 4);
+            memcpy(&v0, target + 5, 4);
+            memcpy(&c2, target + 17, 4);
+            if (c0 == CODE_011 && c2 == CODE_FERD) g_record_type = v0;
         }
         open_add(record, n);
         char th[200], cc[16];
