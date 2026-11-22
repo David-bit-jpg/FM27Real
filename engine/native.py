@@ -36,6 +36,8 @@ from .fmvalue import decode, target_pairs
 SPEAK_TO_TYPE = 102        # SpeakToReference: topics and options
 CONVERSATION_TYPE = 23     # ConversationEditSessionReference: the open conversation
 PRESS_TYPE = 81            # PressConferenceEditSessionReference: the press conference in progress
+MATCH_TYPES = {61, 64}     # match and match-tactics targets: a match is being played or has just ended
+MATCH_QUIET_SECONDS = 240  # the engine leaves FM alone this long after any match activity
 PENDING_SECONDS = 8        # wait this long for FM's audit event before writing
 ACTIVE_SECONDS = 90        # after any dialog activity, re-read the dialog quickly
 TONES = {1: "积极", 2: "中立", 4: "消极"}
@@ -80,7 +82,13 @@ class NativeSync:
         self.current: dict | None = None     # the press question on screen right now (see _refresh_options)
         self.pinned_speak: str | None = None    # a dialog held in the background (press.py), read instead of the screen's
         self.pinned_session: str | None = None
-        self.observers: list = []               # called with every event FM's interface sends (e.g. touchline.py)
+        self.observers: list = []               # called with every event FM's interface sends
+        self.match_seen = 0.0                   # last time the match screen talked to the engine (see match_quiet)
+
+    def match_quiet(self) -> bool:
+        """True during a match and for a few minutes after it, while FM settles the result: the
+        engine then reads nothing and sends nothing (crashes happened right at the end of matches)."""
+        return time.monotonic() - self.match_seen < MATCH_QUIET_SECONDS
 
     # --- polling -----------------------------------------------------------------
     def poll(self, career: Career) -> None:
@@ -88,9 +96,12 @@ class NativeSync:
             seen = self.bridge.events(0)
             self.since = max((e["seq"] for e in seen), default=0)
             return
-        self._refresh_options()
+        if not self.match_quiet():
+            self._refresh_options()
         for ev in self.bridge.events(self.since):
             self.since = max(self.since, ev["seq"])
+            if target_pairs(ev.get("target", "")).get(" 011") in MATCH_TYPES:
+                self.match_seen = time.monotonic()
             for observe in self.observers:
                 try:
                     observe(career, ev)
