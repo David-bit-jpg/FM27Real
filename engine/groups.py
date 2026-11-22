@@ -20,11 +20,12 @@ from .bridge import Bridge
 from .career import Career
 from .dialogue import _english_level
 from .model import Provider
+from .interactions import KIND_NAMES, TONES
 
 HISTORY = 30
 
 SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["replies", "importance", "memory"],
+    "type": "object", "additionalProperties": False, "required": ["replies", "importance", "memory", "fm_talks"],
     "properties": {
         "replies": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["name", "text"],
@@ -33,6 +34,11 @@ SCHEMA = {
         "importance": {"type": "integer", "minimum": 0, "maximum": 3,
                        "description": "how much the manager's message matters to the members (0 small talk … 3 big)"},
         "memory": {"type": "string", "description": "one third-person sentence the members will remember, or empty"},
+        "fm_talks": {"type": "array", "description": "members the manager's message really praises, criticises, "
+                     "reassures, etc. as a football manager (at most 2), with the kind of interaction",
+                     "items": {"type": "object", "additionalProperties": False, "required": ["name", "kind", "tone"],
+                               "properties": {"name": {"type": "string"}, "kind": {"type": "string", "enum": KIND_NAMES},
+                                              "tone": {"type": "string", "enum": TONES}}}},
     },
 }
 
@@ -117,4 +123,6 @@ invent results, injuries or transfers."""
             for ref in g["members"]:
                 store.add_memory(ref, memory, career.date, "group", mem.IMPORTANCE_WEIGHT.get(max(0, min(3, importance)), 1.0),
                                  "group")
+        self.last_talks = [(by_name.get(str(t.get("name") or "").strip()), t.get("kind"), t.get("tone"))
+                           for t in (result.get("fm_talks") or [])[:2]]
         return replies

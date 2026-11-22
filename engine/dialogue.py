@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from . import memory as mem
 from . import story
+from .interactions import SCHEMA_FIELD as FM_TALK_FIELD
 from .career import Career
 from .model import ModelError, Provider
 
@@ -21,7 +22,7 @@ REPLY_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["reply", "body_language", "mood", "relation_delta", "memory", "new_canon", "end", "importance",
-                 "promise"],
+                 "promise", "fm_talk"],
     "properties": {
         "reply": {"type": "string", "description": "what the character says back"},
         "body_language": {"type": "string",
@@ -44,6 +45,7 @@ REPLY_SCHEMA = {
         "importance": {"type": "integer", "minimum": 0, "maximum": 3,
                        "description": "how much this exchange matters to you: 0 small talk, 1 nice or useful, "
                                       "2 significant (praise or criticism that hits home), 3 life-changing"},
+        "fm_talk": FM_TALK_FIELD,
         "promise": {"type": "string",
                     "description": "if the manager promised you something concrete, the promise in a short third-person "
                                    "sentence; else empty"},
@@ -212,6 +214,7 @@ def validate(result: dict) -> dict:
         "end": bool(result.get("end")),
         "importance": max(0, min(3, int(result.get("importance") or 0))) if str(result.get("importance") or 0).lstrip("-").isdigit() else 1,
         "promise": str(result.get("promise") or "").strip()[:200],
+        "fm_talk": result.get("fm_talk") if isinstance(result.get("fm_talk"), dict) else {"kind": "none", "tone": "warm"},
     }
 
 

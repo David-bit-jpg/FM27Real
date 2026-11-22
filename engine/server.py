@@ -41,6 +41,7 @@ from .social import SocialFeed
 from .squad import Roster
 from .groups import Groups
 from .edits import GameEdits
+from .interactions import FMTalks
 from . import graphics
 
 PORT = 27271
@@ -118,6 +119,7 @@ class Engine:
         self.social = SocialFeed(self.story, self.roster)
         self.groups = Groups(self.bridge)
         self.edits = GameEdits(self.bridge)
+        self.talks = FMTalks(self.bridge, self.roster)
         self.edits_clock: tuple | None = None
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
@@ -260,8 +262,13 @@ def make_handler(engine: Engine):
                     if model is None:
                         return self._json(502, {"error": "no model configured", "code": "model"})
                     try:
-                        return self._json(200, {"replies": engine.groups.send(engine.careers.current(), model, m.group(1),
-                                                                             text, engine.settings["language"])})
+                        career = engine.careers.current()
+                        replies = engine.groups.send(career, model, m.group(1), text, engine.settings["language"])
+                        if engine.settings.get("game_edits", True):
+                            for ref, kind, tone in getattr(engine.groups, "last_talks", []):
+                                if ref and kind not in (None, "none"):
+                                    engine.talks.queue(career, ref, kind, tone or "warm", text[:300], "group")
+                        return self._json(200, {"replies": replies})
                     except ModelError as e:
                         return self._json(502, {"error": str(e), "code": "model"})
                 if method == "POST" and path == "/api/edits/test":  # a visible +1 to the manager's reputation
@@ -270,6 +277,10 @@ def make_handler(engine: Engine):
                         "record": career.manager_id, "name": career.manager_name, "kind": "person", "field": "当前声望",
                         "delta": 1, "reason": "测试修改", "status": "pending"}, event_key=f"edit:test:{career.clock}")
                     return self._json(200, {"queued": True})
+                if method == "GET" and path == "/api/talks":
+                    career = engine.careers.current()
+                    return self._json(200, {"log": engine.talks.log(career),
+                                            "pending": [e["payload"] for e in engine.talks.pending(career)]})
                 if method == "GET" and path == "/api/edits":
                     career = engine.careers.current()
                     return self._json(200, {"enabled": engine.settings.get("game_edits", True),
@@ -422,7 +433,15 @@ def make_handler(engine: Engine):
             model = self._model()
             if model is None:
                 return self._json(502, {"error": "no model configured", "code": "model"})
-            self._json(200, engine.press.answer(engine.careers.current(), model, text))
+            career = engine.careers.current()
+            result = engine.press.answer(career, model, text)
+            if engine.settings.get("game_edits", True) and result.get("done"):
+                by_name = {p["name"]: p["id"] for p in engine.roster.at_club(career)}
+                for name, kind, tone, words in getattr(engine.press, "last_effects", []):
+                    if by_name.get(name) and kind not in (None, "none"):
+                        engine.talks.queue(career, by_name[name], kind, tone or "warm", words[:300], "press")
+                engine.press.last_effects = []
+            self._json(200, result)
 
         def _send_message(self, person_id: str) -> None:
             text = str(self._body().get("text") or "").strip()
@@ -435,6 +454,9 @@ def make_handler(engine: Engine):
                                           engine.settings["language"])
             except ModelError as e:
                 return self._json(502, {"error": str(e), "code": "model"})
+            talk = reply.get("fm_talk") or {}
+            if engine.settings.get("game_edits", True) and talk.get("kind") not in (None, "none"):
+                engine.talks.queue(career, person_id, talk["kind"], talk.get("tone", "warm"), text[:300], "phone")
             self._json(200, reply)
 
         def _models(self, settings: dict) -> None:
@@ -488,6 +510,7 @@ def background(engine: Engine, interval: float = 3.0) -> None:
                 clock = (career.key, career.clock)
                 if clock != engine.edits_clock:  # only when the game advanced
                     engine.edits_clock = clock
+                    engine.talks.run(career, busy=bool(engine.native.current))  # background FM conversations
                     engine.edits.run(career, busy=bool(engine.native.current))
             if career.store.get_meta("forgotten_on") != career.date:  # once a game day
                 from . import memory as mem

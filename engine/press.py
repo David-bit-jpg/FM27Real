@@ -30,6 +30,7 @@ from .fmvalue import speak_choice
 from .model import ModelError, Provider
 from .native import NativeSync, TONES
 from .stats import season
+from .interactions import KIND_NAMES, TONES
 
 MAX_FOLLOW_UPS = 1   # at most one follow-up per question, and only when the answer dodges
 
@@ -40,7 +41,7 @@ QUESTION_SCHEMA = {
 
 ANSWER_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["follow_up", "reply", "body_language", "option", "memory", "headline"],
+    "required": ["follow_up", "reply", "body_language", "option", "memory", "headline", "player_effects"],
     "properties": {
         "follow_up": {"type": "boolean", "description": "true to press the manager with one more question"},
         "reply": {"type": "string", "description": "the follow-up question, or a short closing remark / note-taking"},
@@ -48,6 +49,12 @@ ANSWER_SCHEMA = {
         "option": {"type": "integer", "description": "id of the FM answer option closest in tone and meaning"},
         "memory": {"type": "string", "description": "one sentence, third person, what the journalist will remember"},
         "headline": {"type": "string", "description": "a headline the journalist might write, or empty"},
+        "player_effects": {"type": "array", "description": "our players the manager publicly praised or criticised "
+                           "in his answer (at most 2), with the kind of interaction it amounts to",
+                           "items": {"type": "object", "additionalProperties": False, "required": ["name", "kind", "tone"],
+                                     "properties": {"name": {"type": "string"},
+                                                    "kind": {"type": "string", "enum": KIND_NAMES},
+                                                    "tone": {"type": "string", "enum": TONES}}}},
     },
 }
 
@@ -275,6 +282,8 @@ invent facts, records, streaks or quotes.
         with self.lock:
             self._asked_here(cur).append({"outlet": j["outlet"] or j["name"], "question": question,
                                           "answer": " ".join(t["text"] for t in thread if t["who"] == "manager")[:300]})
+        self.last_effects = [(t.get("name"), t.get("kind"), t.get("tone"), " ".join(x["text"] for x in thread
+                              if x["who"] == "manager")) for t in (r.get("player_effects") or [])[:2]]
         sent = self._submit(cur, option)
         self._remember(career, cur, j, question, thread, cur["options"][option], r, sent)
         with self.lock:

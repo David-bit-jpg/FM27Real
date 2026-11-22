@@ -178,7 +178,7 @@ const T = {
   zh: { phone: "主教练手机", messages: "消息", groups: "群聊", newGroup: "＋ 新建群聊", groupName: "群名（可不填）", create: "创建",
         pickMembers: "选择成员", groupTyping: "群里有人在输入…", groupsUnavailable: "群聊暂时不可用：请重启引擎（scripts/restart-engine.sh）", refresh: "刷新", me: "我",
         gameEdits: "修改游戏数据（游戏内编辑器）", gameEditsHint: "世界里发生的事会通过 FM 自己的编辑器小幅改动游戏数据（声望、隐藏属性）。每推进一次游戏时间最多改一项，编辑器会短暂弹出。需要已购买游戏内编辑器。",
-        on: "开", off: "关", editLog: "修改记录", noEdits: "还没有修改。", testEdit: "测试：下次推进时把我的声望 +1", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
+        on: "开", off: "关", editLog: "修改记录", noEdits: "还没有修改。", testEdit: "测试：下次推进时把我的声望 +1", talkLog: "后台原版谈话", noTalks: "还没有后台谈话。私聊、群聊、发布会里表扬或批评球员后，下次推进时会在后台进行。", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
         refreshing: "大家正在发帖…", answersLater: "已发出。回复会在之后几个小时里陆续出现。", fullTime: "全场结束", motm: "全场最佳", apps: "出场", matchday: "比赛日", odds: "赔率", homeWin: "主胜", draw: "平", awayWin: "客胜", allComments: "查看全部 N 条评论",
         notifications: "通知", repliedYou: "回复了你", mentionedYou: "提到了你", fanMood: "球迷对你的情绪", noPosts: "还没有帖子。比赛和新闻之后大家会在这里发帖。", sending: "发送中…", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
         pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
@@ -194,7 +194,7 @@ const T = {
   en: { phone: "Manager's phone", messages: "Messages", groups: "Group chats", newGroup: "+ New group", groupName: "Group name (optional)", create: "Create",
         pickMembers: "Pick members", groupTyping: "Someone is typing…", groupsUnavailable: "Group chats unavailable: restart the engine (scripts/restart-engine.sh)", refresh: "Refresh", me: "Me",
         gameEdits: "Change game data (In-Game Editor)", gameEditsHint: "What happens in the world makes small changes to FM's data (reputation, hidden attributes) through FM's own editor. At most one change each time the game advances; the editor shows briefly. Needs the In-Game Editor.",
-        on: "On", off: "Off", editLog: "Change log", noEdits: "No changes yet.", testEdit: "Test: +1 to my reputation on the next advance", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
+        on: "On", off: "Off", editLog: "Change log", noEdits: "No changes yet.", testEdit: "Test: +1 to my reputation on the next advance", talkLog: "Background FM conversations", noTalks: "None yet. Praise or criticise a player in a chat, group or press conference; it happens on the next advance.", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
         refreshing: "People are posting…", answersLater: "Sent. Answers will come in over the next few hours.", fullTime: "Full time", motm: "Player of the match", apps: "Apps", matchday: "Matchday", odds: "Odds", homeWin: "Home", draw: "Draw", awayWin: "Away", allComments: "View all N comments",
         notifications: "Notifications", repliedYou: "replied to you", mentionedYou: "mentioned you", fanMood: "Supporters' mood", noPosts: "No posts yet. People post here after matches and news.", sending: "Sending…", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
         pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
@@ -735,6 +735,14 @@ async function showSettings() {
                   ...(d.log || []).map(x => el("div", { class: "note" }, `✅ [${x.date}] ${x.name || x.record} · ${x.field} ${x.before} → ${x.after} — ${x.reason}`))];
     editLog.replaceChildren(el("div", { class: "section", style: "padding:10px 0 4px" }, t("editLog")),
       ...(rows.length ? rows : [el("div", { class: "hint" }, t("noEdits"))]));
+    return api("/api/talks");
+  }).then(d => {
+    if (!d) return;
+    const rows = [...(d.pending || []).map(p => el("div", { class: "note" }, `⏳ ${p.kind} · ${p.source}：${p.words}`)),
+                  ...(d.log || []).map(x => { const last = (x.exchange || []).slice(-1)[0] || {};
+                    return el("div", { class: "note" }, `💬 [${x.date}] ${x.kind}：「${(x.exchange || [])[0]?.manager || ""}」→ 「${(last.player || []).join(" ")}」（${x.body || ""}）`); })];
+    editLog.append(el("div", { class: "section", style: "padding:10px 0 4px" }, t("talkLog")),
+      ...(rows.length ? rows : [el("div", { class: "hint" }, t("noTalks"))]));
   }).catch(() => {});
 }
 
