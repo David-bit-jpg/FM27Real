@@ -146,3 +146,19 @@ C# 端对应 `FM.UI.DatabaseRecordReference`：`m_index` 在 `0x1c`，`Type` 在
   objects may only be opened by the editor panel itself. Map fields passively from tap.log while the user
   browses the editor; never query type 42/43 targets.
 - Person morale: `aroM` (0-20 scale as seen).
+
+### Driving the editor (working, 2026-11-21)
+
+1. Open: `GET /editor/open?record=<hex>&kind=person|club` → IGEModule.OpenIGEPanel(index Player/Club,
+   PersonReference/ClubReference(List<Pair>), EditorReference(' 011'=42, crBD=record, Guid, dise=0)).
+2. Tabs are UI-only (no engine traffic): click them with `GET /ui/click?click=1&text=<label>`
+   (ClickEvent + Clickable.SimulateSingleClick). Tab rows: top 个人信息 | 球员属性/职员属性 | 合同;
+   under attributes: 关键属性 | 隐藏属性 | 位置 | 个人习惯 | 身体 | 培养于 | 禁赛 (players);
+   under 个人信息: 细节 | 国家或地区 | 关系 | 其他语言 …
+   Reputation (当前/国内/国际声望, 1–10000) and hidden attributes (1–20: 雄心, 忠诚, 抗压能力, 职业, 体育道德,
+   情绪控制, 争论, 多面性 …) are under 属性 → 隐藏属性.
+3. Fields on screen: `GET /editor` → [{label, value, key}] (UI channel tree: field node → eman / lvtp children).
+4. Write: `GET /editor/set?key=&data=` → UpdateChannelData on the UI's own lvtp channel. Value encoding as the
+   UI sends it: text 0x1a + u32 len + UTF-8; small ints 0x11 int8; reputation 0x12 int16.
+5. Close: `GET /editor/close` → PanelManager.CloseHighestPanel() (as Esc).
+IGEModule.m_index is not the tab (it is the edited object's index).
