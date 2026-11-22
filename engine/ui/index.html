@@ -611,10 +611,10 @@ async function showSocial(skipRefresh) {
     drawComments();
     return el("div", { class: "post" + (p.mentions_manager ? " at" : "") },
       el("div", { class: "head" }, authorAvatar(p.author), el("div", { class: "who" }, name(p.author),
-        el("div", { class: "hd" }, [p.author.handle ? "@" + p.author.handle : "", p.date].filter(Boolean).join(" · ")))),
+        el("div", { class: "hd" }, [p.author.handle ? "@" + String(p.author.handle).replace(/^@+/, "") : "", p.date].filter(Boolean).join(" · ")))),
       picture(p.picture),
-      el("div", { class: "act" }, el("span", {}, `♥ ${p.likes || 0}`), el("button", { onclick: () => openReply(null, null) }, `💬 ${comments.length}`)),
       el("div", { class: "cap" }, name(p.author), el("span", { class: "tx" }, " ", linkify(p.text, people))),
+      el("div", { class: "act" }, el("span", {}, `♥ ${p.likes || 0}`), el("button", { onclick: () => openReply(null, null) }, `💬 ${comments.length}`)),
       list, box);
   };
   const input = el("input", { placeholder: t("postPh"), autocomplete: "off" });
