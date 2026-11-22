@@ -161,6 +161,24 @@ class ContactEngine:
                     "reason": f"You were named player of the match in {line}. You are happy and want to share it "
                               f"with the manager."}))
             out += self._playing_time(career, key)
+        elif kind == "news" and p.get("origin") in ("rumour", "transfer") and p.get("about_us", True):
+            squad = set(self.bridge.team(career.team_id)["squad"])
+            title = p.get("title") or ""
+            ours = [r for r in p.get("people") or [] if r in squad][:1]
+            clubs = "、".join((p.get("clubs") or {}).values())
+            if ours and random.random() < 0.6:  # the player himself: flattered, unsettled, or loyal, as fits him
+                ref = ours[0]
+                out.append((1.4, self._person(ref) | {
+                    "source": key, "preview": f"{self.story.name(ref)}想和你聊聊转会传闻",
+                    "reason": f"Transfer talk about you: 「{title}」 ({clubs}). You want to know where you stand with "
+                              f"the manager, or tell him how you feel about it: flattered, tempted, unsettled or "
+                              f"loyal, whatever fits your age, ambitions, contract and happiness at the club."}))
+            j = self._journalist(career, prefer_hostile=False)
+            if j and (ours or p.get("linked_in")):
+                out.append((1.3, j | {
+                    "source": key + ":j", "preview": f"{j['outlet']} 的{j['name']}想问你转会传闻",
+                    "reason": f"Transfer rumour: 「{title}」 ({p.get('outlet') or 'the media'}). You want the manager's "
+                              f"comment for your story: is it true, is the player for sale, is the club interested?"}))
         elif kind == "news" and (p.get("weight") or 1) >= 1.5:
             squad = set(self.bridge.team(career.team_id)["squad"])
             title = p.get("title") or ""

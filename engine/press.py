@@ -195,13 +195,16 @@ class PressRoom:
         player_lines = []
         for ref in about[:3]:
             name = self.bridge.name(ref)
-            recent = [m["text"] for m in store.memories(ref)[-4:] if m.get("kind") in ("match", "news", "press")]
+            recent = [m["text"] for m in store.memories(ref)[-6:] if m.get("kind") in ("match", "news", "press", "transfer", "rumour")]
             numbers = season(self.bridge, ref)
             player_lines.append(f"{name}: " + " / ".join([numbers] + recent if numbers else recent) if (recent or numbers) else name)
         said = [f"[{e['game_date']}] {e['payload'].get('journalist', {}).get('outlet', '')}问「{e['payload'].get('question')}」"
                 f"，主教练答「{e['payload'].get('answer')}」" for e in store.events("press_answer", limit=6)]
         with_me = [m["text"] for m in mem.recall(store.memories(cur["person"]), career.date, n=5)]
         here = [f"{x['outlet']}：「{x['question']}」→ 主教练：「{x['answer']}」" for x in self._asked_here(cur)]
+        transfer = [f"[{e['game_date']}] {(e['payload'] or {}).get('title')}" + (f"（{e['payload'].get('outlet')}）" if (e['payload'] or {}).get('outlet') else "")
+                    for e in store.events("news", limit=200)
+                    if (e["payload"] or {}).get("origin") in ("rumour", "transfer") and (e["payload"] or {}).get("about_us", True)][-6:]
         return f"""CLUB AND RECENT EVENTS:
 {_lines(story.recent_world(career))}
 
@@ -216,6 +219,9 @@ WHAT THE MANAGER SAID IN RECENT PRESS CONFERENCES:
 
 WHAT THIS JOURNALIST REMEMBERS ABOUT THE MANAGER:
 {_lines(with_me)}
+
+TRANSFER TALK ABOUT THE CLUB (FM's own rumours and interest; usable as facts):
+{_lines(transfer)}
 
 ALREADY ASKED AND ANSWERED IN THIS PRESS CONFERENCE (do not ask these again):
 {_lines(here)}"""

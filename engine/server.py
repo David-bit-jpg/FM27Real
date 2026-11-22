@@ -36,6 +36,8 @@ from .model import PRESETS, ModelError, detect_provider, provider_from_settings
 from .native import NativeSync
 from .story import StoryEngine
 from .press import PressRoom
+from .transfers import Transfers
+from .touchline import Touchline
 from .contacts import ContactEngine
 from .social import SocialFeed
 from .squad import Roster
@@ -117,6 +119,9 @@ class Engine:
         self.roster = Roster(self.bridge)
         self.contacts = ContactEngine(self.story, self.roster)
         self.social = SocialFeed(self.story, self.roster)
+        self.transfers = Transfers(self.bridge, self.roster, self.story)
+        self.touchline = Touchline(self.bridge)
+        self.native.observers.append(self.touchline.observe)
         self.groups = Groups(self.bridge)
         self.edits = GameEdits(self.bridge)
         self.talks = FMTalks(self.bridge, self.roster)
@@ -529,6 +534,8 @@ def background(engine: Engine, interval: float = 3.0) -> None:
         try:
             career = engine.careers.current()
             engine.story.poll(career)
+            engine.transfers.sync(career)
+            engine.touchline.settle(career)
             engine.contacts.poll(career)
             if engine.settings.get("game_edits", True):  # real changes through FM's In-Game Editor
                 engine.edits.plan(career, engine.roster)

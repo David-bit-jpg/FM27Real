@@ -80,6 +80,7 @@ class NativeSync:
         self.current: dict | None = None     # the press question on screen right now (see _refresh_options)
         self.pinned_speak: str | None = None    # a dialog held in the background (press.py), read instead of the screen's
         self.pinned_session: str | None = None
+        self.observers: list = []               # called with every event FM's interface sends (e.g. touchline.py)
 
     # --- polling -----------------------------------------------------------------
     def poll(self, career: Career) -> None:
@@ -90,6 +91,11 @@ class NativeSync:
         self._refresh_options()
         for ev in self.bridge.events(self.since):
             self.since = max(self.since, ev["seq"])
+            for observe in self.observers:
+                try:
+                    observe(career, ev)
+                except Exception:
+                    pass
             try:
                 self._handle(career, ev)
             except Exception:  # an unexpected payload must never stop the sync

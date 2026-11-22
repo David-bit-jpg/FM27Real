@@ -88,7 +88,10 @@ defenders or defensive midfielders for not scoring). Each player sounds like him
 a teenager writes differently from a veteran; a foreign player may slip in his own language or mention home; an \
 academy graduate talks about the club like family; former clubs, old teammates and national teams come up when \
 relevant; a reserved player writes little, an outspoken one stirs things. Fans and pundits know the players' \
-backgrounds too (an ex-rival's player, the local lad, the expensive signing). likes: fans 0-500, players and pundits 2000-80000, the club \
+backgrounds too (an ex-rival's player, the local lad, the expensive signing). Not every commenter supports us: \
+fans of league rivals and of our next opponent troll or banter, and fans of clubs linked with one of our players \
+(see TRANSFER TALK) turn up under his posts to court him ("来X吧", "our badge would suit you") while our fans beg him \
+to stay, call him a snake, or say sell; their handle shows their club. likes: fans 0-500, players and pundits 2000-80000, the club \
 10000-150000."""
 
 
@@ -275,6 +278,9 @@ class SocialFeed:
                         (kind == "news" and ((p.get("weight") or 1) < 1.5 or p.get("origin") in ("social", "media"))):
                     continue
                 out.append({"key": key, "kind": kind, "date": e["game_date"], "payload": p})
+        transfer = [x for x in out if x["kind"] == "news" and x["payload"].get("origin") in ("rumour", "transfer")]
+        for x in sorted(transfer, key=lambda x: -(x["payload"].get("weight") or 1))[2:]:  # two transfer stories a day
+            out.remove(x)
         out.sort(key=lambda x: x["date"] or "", reverse=True)
         return out
 
@@ -313,6 +319,14 @@ class SocialFeed:
         if ev["kind"] == "press_answer":
             return (f"Press conference {ev['date']}: asked 「{p.get('question')}」, the manager said 「{p.get('answer')}」. "
                     f"Headline: {p.get('headline')}")
+        if p.get("origin") in ("rumour", "transfer"):
+            clubs = "、".join((p.get("clubs") or {}).values())
+            return (f"Transfer talk {ev['date']}: {p.get('title')}" + (f" (reported by {p.get('outlet')})" if p.get("outlet") else "")
+                    + (f". Fee mentioned: {p.get('fee')}" if p.get("fee") and p.get("fee") != "-" else "")
+                    + f". Clubs involved: {clubs}. React like real football social media: a gossip account or "
+                    f"transfer insider posts it; fans of the interested club court the player and argue his price; our "
+                    f"fans split between 'never sell' and 'take the money'; rival fans mock; the player himself stays "
+                    f"quiet or posts something cryptic only if it fits him.")
         return f"News {ev['date']}: {p.get('title')}. {(p.get('body') or '')[:300]}"
 
     def _extra(self, career: Career, ev: dict) -> str:
@@ -358,6 +372,12 @@ class SocialFeed:
                 out.append(f"- {name}: {p.get('position') or ''}")
         return "\n".join(out)
 
+    def _transfer_talk(self, career: Career) -> str:
+        lines = [f"- {(e['payload'] or {}).get('title')}" for e in career.store.events("news", limit=200)
+                 if (e["payload"] or {}).get("origin") in ("rumour", "transfer") and _age(career, e["game_date"]) <= 21
+                 and (e["payload"] or {}).get("about_us", True)][-8:]
+        return "\n".join(lines) or "- none"
+
     def _context(self, career: Career, players: dict[str, dict]) -> str:
         mine = [f"「{c['text']}」" for p in self._all(career, 60) for c in p.get("comments") or []
                 if c["author"]["kind"] == "manager"][:5]
@@ -366,6 +386,7 @@ class SocialFeed:
                 f"Supporters' mood toward the manager (-10 furious .. 10 adoring): {self.fan_mood(career)}\n"
                 "Recent results and news:\n" + "\n".join(f"- {x}" for x in story.recent_world(career)) +
                 "\nWHO OUR PLAYERS ARE (the only ones who may post as players):\n" + self._who(career, players) +
+                "\nTRANSFER TALK (clubs interested in our players, media rumours):\n" + self._transfer_talk(career) +
                 ("\nWhat the manager wrote on social media lately:\n" + "\n".join(f"- {x}" for x in mine) if mine else ""))
 
     # --- FM's own posts ---------------------------------------------------------------

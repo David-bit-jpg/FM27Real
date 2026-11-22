@@ -60,6 +60,15 @@ PUSHBACK = {  # once the player pushes back: a warm manager steps back, a firm o
     "warm": ("建议", "退让", "妥协", "鼓励", "积极", "承诺", "说服", "坚持"),
     "firm": ("坚持", "否定", "批评", "威胁", "说服", "建议"),
 }
+FALLBACK = {  # when FM offers nothing for a topic (not applicable to this player), the nearest one it may offer
+    "encourage_youngster": ("praise_last_match", "praise_form"),
+    "praise_leadership": ("praise_form",),
+    "praise_loan": ("praise_form",),
+    "criticise_loan": ("criticise_form",),
+    "praise_training": ("praise_form",),
+    "criticise_leadership": ("criticise_form",),
+    "criticise_training": ("criticise_form",),
+}
 NULL = -8388609              # FM's null record (0xff7fffff)
 MAX_STEPS = 4                # choices per conversation
 MAX_PER_TICK = 2
@@ -130,12 +139,20 @@ class FMTalks:
         n = 0
         for e in self.pending(career)[:MAX_PER_TICK]:
             plan = e["payload"]
-            try:
-                result = self._talk(career, plan)
-            except BridgeUnavailable:
-                return n
-            except Exception as err:  # never let one conversation stop the world
-                result = {"status": "failed", "error": str(err)}
+            result = {}
+            for kind in (plan["kind"], *FALLBACK.get(plan["kind"], ())):
+                try:
+                    result = self._talk(career, plan | {"kind": kind})
+                except BridgeUnavailable:
+                    return n
+                except Exception as err:  # never let one conversation stop the world
+                    result = {"status": "failed", "error": str(err)}
+                if result.get("status") == "done":
+                    if kind != plan["kind"]:
+                        result["ran_as"] = kind
+                    break
+                if "nothing to say" not in str(result.get("error")):
+                    break
             career.store.update_event(e["event_key"], plan | result)
             n += result.get("status") == "done"
         return n
