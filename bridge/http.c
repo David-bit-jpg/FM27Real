@@ -195,6 +195,15 @@ static void handle(int fd) {
         respond(fd, r == 1 ? 200 : 503, body);
         return;
     }
+    if (!strcmp(target, "/editor/close")) {
+        char dry[8] = "";
+        if (query) param(query, "dry", dry, sizeof dry);
+        int r = tap_editor_close(dry[0] == '1');
+        char body[64];
+        snprintf(body, sizeof body, "{\"result\":%d}", r);
+        respond(fd, r == 1 ? 200 : 503, body);
+        return;
+    }
     if (!strcmp(target, "/editor/set")) {
         char ks[24] = "", dh[2100] = "";
         if (!query || !param(query, "key", ks, sizeof ks) || !param(query, "data", dh, sizeof dh)) {

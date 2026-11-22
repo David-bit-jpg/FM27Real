@@ -1179,7 +1179,61 @@ static struct {
     int pending, finished, result;
     uint32_t record;
     char kind[16];
-} g_ige = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, 0, {0}};
+    int op;  // 0 open, 1 close (dry run: log only), 2 close
+} g_ige = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, 0, {0}, 0};
+
+static const MethodInfo *method_with_params(Il2CppClass *k, const char *name, int argc);
+static size_t field_offset(Il2CppClass *k, const char *name);
+
+static Il2CppObject *first_instance(Il2CppClass *k) {
+    Il2CppClass *resources_k = il2cpp_find_class("UnityEngine.CoreModule.dll", "UnityEngine", "Resources");
+    const MethodInfo *find_all = method_with_params(resources_k, "FindObjectsOfTypeAll", 1);
+    if (!k || !find_all) return NULL;
+    Il2CppException *exc = NULL;
+    void *fargs[1] = {il2cpp_type_get_object(il2cpp_class_get_type(k))};
+    Il2CppObject *arr = il2cpp_runtime_invoke(find_all, NULL, fargs, &exc);
+    uint64_t count = 0;
+    Il2CppObject *obj = NULL;
+    if (!arr || exc || !safe_read((uint8_t *)arr + 0x18, &count, 8) || !count ||
+        !safe_read((uint8_t *)arr + 0x20, &obj, sizeof obj)) return NULL;
+    return obj;
+}
+
+static void layer_name(Il2CppObject *s, char *out, size_t n) {
+    if (s) il2cpp_utf8((Il2CppString *)s, out, n);
+    else strlcpy(out, "(null)", n);
+}
+
+// Closes the editor: PanelManager.CloseAll(IGEModule.m_highestIGELayer). With dry,
+// only logs the layers involved.
+static int ige_close_main(int dry) {
+    Il2CppClass *module_k = il2cpp_find_class("FM.UI.dll", "FM.UI", "IGEModule");
+    Il2CppClass *pm_k = il2cpp_find_class("SI.Bindable.dll", "SI.Bindable", "PanelManager");
+    Il2CppObject *module = first_instance(module_k), *pm = first_instance(pm_k);
+    const MethodInfo *close_all = method_with_params(pm_k, "CloseAll", 1);
+    if (!module || !pm || !close_all) { log_line("ige: close: module %p pm %p method %p", (void *)module, (void *)pm, (void *)close_all); return -2; }
+    size_t hi_off = field_offset(module_k, "m_highestIGELayer"), list_off = field_offset(module_k, "m_layersToProcess");
+    Il2CppObject *hi = NULL, *arr = NULL;
+    safe_read((uint8_t *)module + hi_off, &hi, sizeof hi);
+    safe_read((uint8_t *)module + list_off, &arr, sizeof arr);
+    char name[128];
+    layer_name(hi, name, sizeof name);
+    log_line("ige: highest IGE layer = %s", name);
+    uint64_t n = 0;
+    if (arr && safe_read((uint8_t *)arr + 0x18, &n, 8))
+        for (uint64_t i = 0; i < n && i < 16; i++) {
+            Il2CppObject *s = NULL;
+            safe_read((uint8_t *)arr + 0x20 + 8 * i, &s, sizeof s);
+            layer_name(s, name, sizeof name);
+            log_line("ige: layer to process [%llu] = %s", (unsigned long long)i, name);
+        }
+    if (dry || !hi) return 1;
+    Il2CppException *exc = NULL;
+    void *args[1] = {&hi};  // Layer is a struct holding one string
+    il2cpp_runtime_invoke(close_all, pm, args, &exc);
+    log_line("ige: CloseAll(highest IGE layer)%s", exc ? " threw" : "");
+    return exc ? -5 : 1;
+}
 
 static const MethodInfo *method_with_params(Il2CppClass *k, const char *name, int argc) {
     void *it = NULL;
@@ -1266,7 +1320,7 @@ static void ige_step(void) {
             log_line("ige: fault while opening the editor");
         } else {
             t_guard = &here;
-            g_ige.result = ige_open_main(g_ige.record, g_ige.kind);
+            g_ige.result = g_ige.op ? ige_close_main(g_ige.op == 1) : ige_open_main(g_ige.record, g_ige.kind);
             t_guard = NULL;
         }
         g_ige.pending = 0;
@@ -1276,10 +1330,11 @@ static void ige_step(void) {
     pthread_mutex_unlock(&g_ige.m);
 }
 
-int tap_editor_open(uint32_t record, const char *kind) {
+static int ige_run(uint32_t record, const char *kind, int op) {
     if (!tap_ready()) return 0;
     pthread_mutex_lock(&g_ige.lock);
     pthread_mutex_lock(&g_ige.m);
+    g_ige.op = op;
     g_ige.record = record;
     strlcpy(g_ige.kind, kind, sizeof g_ige.kind);
     g_ige.pending = 1;
@@ -1295,6 +1350,9 @@ int tap_editor_open(uint32_t record, const char *kind) {
     pthread_mutex_unlock(&g_ige.lock);
     return r;
 }
+
+int tap_editor_open(uint32_t record, const char *kind) { return ige_run(record, kind, 0); }
+int tap_editor_close(int dry) { return ige_run(0, "", dry ? 1 : 2); }
 
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     g_orig_tick(a, b, c, d, e, f, g, h);
@@ -1444,6 +1502,7 @@ char *tap_last_target(uint32_t type) { (void)type; return NULL; }
 int tap_send_event(uint32_t id, const uint8_t *t, int tl, const uint8_t *d, int dl) { (void)id; (void)t; (void)tl; (void)d; (void)dl; return 0; }
 char *tap_editor_json(void) { return strdup("[]"); }
 int tap_editor_open(uint32_t record, const char *kind) { (void)record; (void)kind; return 0; }
+int tap_editor_close(int dry) { (void)dry; return 0; }
 int tap_editor_set(uint64_t key, const uint8_t *d, int dl) { (void)key; (void)d; (void)dl; return 0; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }
