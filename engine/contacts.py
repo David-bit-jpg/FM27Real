@@ -27,6 +27,10 @@ from .career import Career
 from .story import StoryEngine
 
 MAX_PER_DAY = 3
+REPORT_EVERY_DAYS = 3     # a teammate tells on someone at most this often
+COMPLAINT_EVERY_DAYS = 2  # an unhappy player raises his issue himself at most this often
+UNHAPPY_WORDS = ("不满", "不开心", "失望", "不高兴", "沮丧", "担心", "不满意", "unhappy", "frustrat", "concern")
+SETTINGS = ("吃饭的时候", "训练间隙", "更衣室里", "大巴上", "健身房里", "理疗室里", "队内聚餐时")
 MAX_AGE_DAYS = 3          # older events never trigger contacts (e.g. after the first run)
 POOR_RATING = 6.0
 INJURY_WORDS = ("伤", "缺席", "injur")
@@ -50,10 +54,17 @@ class ContactEngine:
         store = career.store
         cursor = int(store.get_meta("contacts_cursor", "0") or 0)
         events = store.events_after(cursor)
-        if not events:
-            return
-        store.set_meta("contacts_cursor", str(events[-1]["id"]))
         candidates: list[tuple[float, dict]] = []
+        if store.get_meta("dressing_room_checked") != career.date:  # once a game day
+            store.set_meta("dressing_room_checked", career.date)
+            try:
+                candidates += self._dressing_room(career)
+            except Exception:
+                pass
+        if not events and not candidates:
+            return
+        if events:
+            store.set_meta("contacts_cursor", str(events[-1]["id"]))
         for e in events:
             if _age(career, e["game_date"]) > MAX_AGE_DAYS:
                 continue
@@ -75,6 +86,47 @@ class ContactEngine:
             if store.add_event("contact", career.date, c, event_key=f"contact:{c['source']}:{c['person']}"):
                 unread.add(c["person"])
                 room -= 1
+
+    # --- the dressing room: unhappy players, and teammates who tell the manager -----------
+    def _dressing_room(self, career: Career) -> list[tuple[float, dict]]:
+        if not self.roster:
+            return []
+        store = career.store
+        players = self.roster.at_club(career)
+        unhappy = [(p, [h for h in p["happiness"] if any(w in h for w in UNHAPPY_WORDS)]) for p in players]
+        unhappy = [(p, issues) for p, issues in unhappy if issues]
+        if not unhappy:
+            return []
+        out = []
+        last_report = store.get_meta("last_report") or ""
+        if not last_report or _age(career, last_report) >= REPORT_EVERY_DAYS:
+            subject, issues = random.choice(unhappy)
+            def closeness(p):
+                rel = store.relation(p["id"])
+                return (rel["trust"] + rel["liking"], p["group"] == subject["group"], "领袖" in p["influence"])
+            informants = sorted((p for p in players if p["id"] != subject["id"]), key=closeness, reverse=True)
+            if informants:
+                spy = informants[0]
+                where = random.choice(SETTINGS)
+                out.append((1.7, self._person(spy["id"]) | {
+                    "source": f"report:{career.date}:{subject['id']}",
+                    "preview": f"{spy['name']}有话想私下跟你说",
+                    "reason": f"You are close to the manager. {where}, you heard your teammate {subject['name']} "
+                              f"({subject['position']}) talk about something he is unhappy about. FM's own words for "
+                              f"his situation: 「{issues[0]}」. Tell the manager quietly what {subject['name']} said "
+                              f"and what he seems to want; you may add your own view. Do not invent any other facts."}))
+                store.set_meta("last_report", career.date)
+        last_complaint = store.get_meta("last_complaint") or ""
+        if not last_complaint or _age(career, last_complaint) >= COMPLAINT_EVERY_DAYS:
+            p, issues = random.choice(unhappy)
+            out.append((1.5, self._person(p["id"]) | {
+                "source": f"complaint:{career.date}:{p['id']}",
+                "preview": f"{p['name']}想和你谈谈",
+                "reason": f"Something bothers you at the club. FM's own words for your situation: 「{issues[0]}」. "
+                          f"You raise it with the manager (training, your position, playing time, how you are treated "
+                          f"— whatever this is about), in your own way."}))
+            store.set_meta("last_complaint", career.date)
+        return out
 
     def _person(self, ref: str, role: str = "player") -> dict:
         return {"person": ref, "name": self.story.name(ref), "role": role}
