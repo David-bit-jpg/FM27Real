@@ -31,6 +31,7 @@ from .stats import season_values
 from .squad import Roster
 
 MAX_AGE_DAYS = 5            # events older than this get no posts
+MEDIA_STORIES_PER_DAY = 2    # media stories from FM's inbox turned into posts each game day
 JOBHUNT_EVERY_DAYS = 3     # posts about an unemployed manager's next job
 MAX_EVENTS_PER_REFRESH = 3  # one model call each
 LIFE_POST_DAYS = 3          # a player life post at most this often
@@ -302,9 +303,22 @@ class SocialFeed:
                 if kind == "upcoming" and _age(career, p.get("date")) > 0:  # the match has been played
                     continue
                 if (kind == "match" and not p.get("club")) or \
-                        (kind == "news" and ((p.get("weight") or 1) < 1.5 or p.get("origin") in ("social", "media"))):
+                        (kind == "news" and (((p.get("weight") or 1) < 1.5 and not p.get("media_story"))
+                                             or p.get("origin") in ("social", "media"))):
                     continue
                 out.append({"key": key, "kind": kind, "date": e["game_date"], "payload": p})
+        # Media stories from FM's inbox (other managers' press conferences, league news): a few a game day,
+        # those about the manager or his club first; the rest are skipped for good.
+        media = [x for x in out if x["kind"] == "news" and x["payload"].get("media_story")
+                 and x["payload"].get("origin") not in ("manager_talk", "manager_said")]
+        media_keys = {e.get("event_key") for e in career.store.events("news", limit=300) if (e["payload"] or {}).get("media_story")}
+        media_done = {p.get("source") for p in self._all(career, 300)
+                      if p.get("date", "")[:10] == career.date and p.get("source") in media_keys}
+        about_us = lambda x: (career.team_name in (x["payload"].get("body") or "") or
+                              career.manager_name in (x["payload"].get("body") or ""))
+        for x in sorted(media, key=lambda x: (about_us(x), x["date"] or ""), reverse=True)[max(0, MEDIA_STORIES_PER_DAY - len(media_done)):]:
+            out.remove(x)
+            career.store.add_event("social_post_none", career.date, {"source": x["key"], "skipped": True})
         # At most two transfer stories a game day; the rest are skipped for good (never retried).
         is_transfer = lambda key: str(key).startswith(("news:rumour:", "news:interest:"))
         done_today = {e["payload"].get("source") for e in career.store.events("social_post_none", limit=500)
@@ -375,6 +389,10 @@ class SocialFeed:
         if p.get("origin") == "manager_said":
             return (f"{ev['date']}: {p.get('title')}. {(p.get('body') or '')[:600]} Fans and pundits react to "
                     f"what the manager said.")
+        if p.get("media_story") and p.get("origin") not in ("manager_talk", "manager_said"):
+            return (f"Media story {ev['date']}: {p.get('title')}. {(p.get('body') or '')[:900]} React like football "
+                    f"social media: the club's fans, rival fans, neutral accounts and pundits; quote only what the story "
+                    f"says. Our club's fans join in when it concerns us, a rival or our league position.")
         if p.get("origin") in ("rumour", "transfer"):
             clubs = "、".join((p.get("clubs") or {}).values())
             return (f"Transfer talk {ev['date']}: {p.get('title')}" + (f" (reported by {p.get('outlet')})" if p.get("outlet") else "")
