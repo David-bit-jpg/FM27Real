@@ -303,6 +303,13 @@ def make_handler(engine: Engine):
                     return self._json(200, {"ok": True})
                 if method == "GET" and path == "/api/press":
                     return self._press_state()
+                if method == "POST" and path == "/api/press/start":  # FM's press conference, held in the background
+                    return self._json(200, engine.press.background_open(engine.careers.current()))
+                if method == "POST" and path == "/api/press/leave":
+                    return self._json(200, engine.press.background_close(engine.careers.current(), early=True))
+                if method == "POST" and path == "/api/press/finished":
+                    engine.press.finished = None
+                    return self._json(200, {"ok": True})
                 if method == "POST" and path == "/api/press/answer":
                     return self._press_answer()
                 if method == "POST" and path == "/api/press/dismiss":
@@ -441,7 +448,8 @@ def make_handler(engine: Engine):
                 return None
 
         def _press_state(self) -> None:
-            self._json(200, engine.press.state(engine.careers.current(), self._model()))
+            career = engine.careers.current()
+            self._json(200, engine.press.state(career, self._model()) | engine.press.background_state(career))
 
         def _press_answer(self) -> None:
             text = str(self._body().get("text") or "").strip()[:1000]
@@ -548,7 +556,9 @@ def native_loop(engine: Engine, interval: float = 0.5) -> None:
     import time
     while True:
         try:
-            engine.native.poll(engine.careers.current())
+            career = engine.careers.current()
+            engine.native.poll(career)
+            engine.press.background_tick(career)
         except BridgeUnavailable:
             time.sleep(2)
         except Exception as e:  # never let the loop die

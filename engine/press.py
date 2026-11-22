@@ -19,18 +19,48 @@ If anything fails, the question is handed back to FM's own options.
 """
 from __future__ import annotations
 
+import struct
 import threading
 import time
+from datetime import date as Date
 
 from . import memory as mem
 from . import story
 from .bridge import Bridge, BridgeUnavailable, _text
 from .career import Career
-from .fmvalue import speak_choice
+from .fmvalue import speak_choice, target_pairs
 from .model import ModelError, Provider
 from .native import NativeSync, TONES
 from .stats import season
-from .interactions import KIND_NAMES, TONES
+from .interactions import KIND_NAMES, TONES as TALK_TONES
+
+PRESS_SESSION_TYPE = 81          # PressConferenceEditSessionReference
+EV_PRESS_START = 863384693
+EV_PRESS_ATTENDED = 876038760    # to the manager, with the invitation's news id (FM's interface sends it on leaving)
+EV_NEWS_ACTIONED = 75            # to the invitation news item
+INVITE_WORDS = ("新闻发布会即将开始", "press conference")
+INVITE_DAYS = 2
+END_IDLE_SECONDS = 10            # no new question this long after an answer: FM is done
+ABANDON_SECONDS = 900
+MAX_AUTO_ANSWERS = 12
+
+
+def _i32(rec: str) -> int:
+    v = int(rec, 16)
+    return v - (1 << 32) if v >= 1 << 31 else v
+
+
+def _days(a: str | None, b: str | None) -> int:
+    try:
+        return abs((Date.fromisoformat(b) - Date.fromisoformat(a)).days)
+    except (TypeError, ValueError):
+        return 999
+
+
+def _null_choice(person: str, guid: int) -> str:
+    """The SpeakTo record with no option chosen (p3fs null), as FM sends on start and leave."""
+    return speak_choice(person, guid, 0).replace("703366730111" + "00", "70336673" + "0100")
+
 
 MAX_FOLLOW_UPS = 1   # at most one follow-up per question, and only when the answer dodges
 
@@ -54,7 +84,7 @@ ANSWER_SCHEMA = {
                            "items": {"type": "object", "additionalProperties": False, "required": ["name", "kind", "tone"],
                                      "properties": {"name": {"type": "string"},
                                                     "kind": {"type": "string", "enum": KIND_NAMES},
-                                                    "tone": {"type": "string", "enum": TONES}}}},
+                                                    "tone": {"type": "string", "enum": TALK_TONES}}}},
     },
 }
 
@@ -78,6 +108,8 @@ class PressRoom:
         self.journalists: dict[str, dict] = {}
         self.conference: tuple[str, list[dict]] = ("", [])  # (dialog target, this conference's Q&As)
         self.positions: tuple[str, list[str]] = ("", [])    # (game date, "name: position" for the first team)
+        self.bg: dict | None = None          # a press conference held in the background (see background_open)
+        self.finished: dict | None = None    # the last background press conference, once over
 
     # --- state -------------------------------------------------------------------
     def _sync(self) -> dict | None:
@@ -203,6 +235,8 @@ word in the context or in the original question. If it is not there, do not ment
 - Never put words in the manager's mouth: quote him only from "WHAT THE MANAGER SAID IN RECENT PRESS \
 CONFERENCES". If that section is empty, do not claim he said anything.
 - Do not count streaks or compute records yourself; only repeat ones stated in the context.
+- Home or away, the stadium and the opponent of the next match come only from the original question or the \
+context ("at <our stadium>" means a home match); never guess them.
 - If the context offers nothing relevant, keep close to the original question and only sharpen the wording.
 - Judge players by their position: do not blame defensive midfielders, defenders or goalkeepers for not \
 scoring; for them talk about defending, passing, positioning or their rating. Goals matter mainly for forwards \
@@ -281,7 +315,8 @@ invent facts, records, streaks or quotes.
             option = next((pid for pid, o in cur["options"].items() if o.get("tone") == 2), next(iter(cur["options"])))
         with self.lock:
             self._asked_here(cur).append({"outlet": j["outlet"] or j["name"], "question": question,
-                                          "answer": " ".join(t["text"] for t in thread if t["who"] == "manager")[:300]})
+                                          "answer": " ".join(t["text"] for t in thread if t["who"] == "manager")[:300],
+                                          "tone": TONES.get(cur["options"][option].get("tone"), "")})
         self.last_effects = [(t.get("name"), t.get("kind"), t.get("tone"), " ".join(x["text"] for x in thread
                               if x["who"] == "manager")) for t in (r.get("player_effects") or [])[:2]]
         sent = self._submit(cur, option)
@@ -302,6 +337,10 @@ invent facts, records, streaks or quotes.
             ok = self.bridge.send_event(event, cur["target"], speak_choice(cur["person"], guid, option))
         except (BridgeUnavailable, ValueError):
             return False
+        if ok and self.bg:
+            self.bg["answered"] += 1
+            self.bg["last_question"] = time.monotonic()
+            self.bg["dirty"] = True
         if ok:  # the native sync must not record this question again
             asked = self.native.by_person.get(cur["person"])
             if asked:
@@ -329,3 +368,180 @@ invent facts, records, streaks or quotes.
             "journalist": j, "question": question, "original": cur["question"], "answer": words,
             "thread": thread, "fm_option": option["text"], "tone": TONES.get(tone, ""), "submitted": sent,
             "headline": str(r.get("headline") or "")[:120], "about": cur.get("links") or []})
+
+    # --- background press conferences (FM's own, without opening FM's screen) -----------------
+    # Recorded from FM's interface (docs/PROTOCOL.md, "Press conference"): the session target
+    # (type 81: Guid, sQvO = the invitation news id, YPbP = the manager) gives the SpeakTo tree in
+    # I69g; FM acts on it while it is held open. Start = event 863384693, answers = event 943147586
+    # (speak_choice), leave = event 31, then FM's interface marks the invitation as attended
+    # (event 876038760 to the manager with the news id, event 75 to the news item).
+    def invitation(self, career: Career) -> dict | None:
+        """The press conference FM has invited the manager to and that is still to be held."""
+        done = {(e["payload"] or {}).get("news") for e in career.store.events("press_bg", limit=50)
+                if (e["payload"] or {}).get("status") == "done"}
+        best = None
+        for item in self.bridge.query(career.manager_id, ["SWEN"]).get("SWEN") or []:
+            target = (item or {}).get("target") if isinstance(item, dict) else None
+            pairs = target_pairs(target or "")
+            news_id = pairs.get("dinu")
+            if news_id is None or news_id in done:
+                continue
+            v = self.bridge.query_target(target, ["ltit", "AMqC"])
+            title = (_text(v.get("ltit")) or "").replace("​", "")
+            if not any(w in title for w in INVITE_WORDS):
+                continue
+            date = v.get("AMqC") if isinstance(v.get("AMqC"), str) else career.date
+            if _days(date, career.date) > INVITE_DAYS:
+                continue
+            if not best or date > best["date"]:
+                best = {"news": news_id, "title": title, "date": date, "target": target}
+        return best
+
+    def background_open(self, career: Career) -> dict:
+        with self.lock:
+            if self.bg:
+                return {"ok": True, "already": True}
+        inv = self.invitation(career)
+        if not inv:
+            return {"ok": False, "error": "没有待开的新闻发布会"}
+        b = self.bridge
+        guid = int(b.status().get("guid") or "0", 16)
+        pairs = [(" 011", PRESS_SESSION_TYPE), ("diuG", guid), ("sQvO", inv["news"]), ("YPbP", _i32(career.manager_id))]
+        session = (bytes([len(pairs)]) + b"".join(c.encode() + struct.pack("<i", v) for c, v in pairs)).hex()
+        holds = []
+        try:
+            h1, values = b.hold_target(session, ["I69g", "gM8V"])
+            if h1:
+                holds.append(h1)
+            speak = (values.get("I69g") or {}).get("target")
+            if not speak:
+                raise RuntimeError("FM did not open the press conference")
+            h2, values2 = b.hold_target(speak, ["itca", "1VLL"])
+            if h2:
+                holds.append(h2)
+            first = self._first_journalist(values, values2)
+            if not first:
+                raise RuntimeError("no journalists")
+            if not b.send_event(EV_PRESS_START, speak, _null_choice(first, guid)):
+                raise RuntimeError("FM did not start the press conference")
+        except Exception as err:
+            for h in holds:
+                b.release(h)
+            return {"ok": False, "error": str(err)}
+        with self.lock:
+            self.bg = {"session": session, "speak": speak, "holds": holds, "guid": guid, "invitation": inv,
+                       "journalist": first, "started": time.monotonic(), "last_question": time.monotonic(),
+                       "answered": 0}
+            self.native.pinned_speak, self.native.pinned_session = speak, session
+            self.native.speak_checked = 0.0
+            self.finished = None
+        career.store.add_event("press_bg", career.date, {"news": inv["news"], "title": inv["title"], "status": "open"},
+                               event_key=f"press_bg:{inv['news']}")
+        self._save_live(career)
+        return {"ok": True}
+
+    @staticmethod
+    def _first_journalist(session_values: dict, speak_values: dict) -> str | None:
+        npc = ((((speak_values.get("itca") or {}).get("props") or {}).get("nzfT") or {}).get("props") or {})
+        h = npc.get("h1J ")
+        if isinstance(h, dict) and h.get("ref"):
+            return h["ref"]
+        for item in session_values.get("gM8V") or []:
+            ferd = target_pairs((item or {}).get("target") or "").get("srep") if isinstance(item, dict) else None
+            if isinstance(ferd, int):
+                return f"{ferd & 0xffffffff:08x}"
+        return None
+
+    def _save_live(self, career: Career) -> None:
+        """Keeps the open conference (its held targets) across an engine restart."""
+        import json
+        bg = self.bg
+        career.store.set_meta("press_bg_live", json.dumps({k: v for k, v in bg.items()
+                                                          if k not in ("started", "last_question")}) if bg else "")
+
+    def _restore_live(self, career: Career) -> None:
+        import json
+        raw = career.store.get_meta("press_bg_live")
+        if self.bg or not raw:
+            return
+        try:
+            bg = json.loads(raw)
+        except ValueError:
+            return
+        now = time.monotonic()
+        self.bg = bg | {"started": now, "last_question": now}
+        self.native.pinned_speak, self.native.pinned_session = bg["speak"], bg["session"]
+        self.native.speak_checked = 0.0
+
+    def background_tick(self, career: Career) -> None:
+        """Called often by the engine: ends a background press conference once FM has no more questions."""
+        with self.lock:
+            self._restore_live(career)
+            bg = self.bg
+            if not bg:
+                return
+            now = time.monotonic()
+            if self.native.current:
+                bg["last_question"] = now
+                return
+            idle = now - bg["last_question"]
+        if (bg["answered"] and idle > END_IDLE_SECONDS) or idle > ABANDON_SECONDS:
+            self.background_close(career)
+
+    def background_close(self, career: Career, early: bool = False) -> dict:
+        with self.lock:
+            self._restore_live(career)
+            bg = self.bg
+            if not bg:
+                return {"ok": True}
+            self.bg = None
+        career.store.set_meta("press_bg_live", "")
+        b, guid, speak, inv = self.bridge, bg["guid"], bg["speak"], bg["invitation"]
+        left = 0
+        try:
+            if early:  # as FM's interface does when the manager walks out: the rest is answered neutrally
+                for _ in range(MAX_AUTO_ANSWERS):
+                    self.native.speak_checked = 0.0
+                    self.native._refresh_options()
+                    cur = self.native.current
+                    if not cur:
+                        break
+                    option = next((pid for pid, o in cur["options"].items() if o.get("tone") == 2), next(iter(cur["options"])))
+                    self._submit(cur, option)
+                    left += 1
+                    time.sleep(1.2)
+            b.send_event(31, speak, _null_choice(bg["journalist"], guid))
+            manager = (bytes([3]) + b" 011" + struct.pack("<i", 0x1c) + b"diuG" + struct.pack("<i", guid)
+                       + b"ferd" + struct.pack("<i", _i32(career.manager_id))).hex()
+            b.send_event(EV_PRESS_ATTENDED, manager, (b"\x01\x01" + struct.pack("<i", inv["news"])).hex())
+            b.send_event(EV_NEWS_ACTIONED, inv["target"], "0100")
+        finally:
+            for h in bg["holds"]:
+                b.release(h)
+            with self.lock:
+                self.native.pinned_speak = self.native.pinned_session = None
+                self.native.current = None
+        target, items = self.conference
+        self.finished = {"title": inv["title"], "answers": list(items), "auto": left}
+        career.store.update_event(f"press_bg:{inv['news']}", {"news": inv["news"], "title": inv["title"],
+                                                              "status": "done", "answers": len(items), "auto": left})
+        career.store.add_event("press_conference", career.date, {"title": inv["title"], "answers": list(items),
+                                                                 "walked_out": early},
+                               event_key=f"press_conference:{inv['news']}")
+        return {"ok": True, "auto_answered": left}
+
+    def background_state(self, career: Career) -> dict:
+        with self.lock:
+            self._restore_live(career)
+            bg = self.bg
+            if bg and bg.pop("dirty", None):
+                self._save_live(career)
+        if bg:
+            return {"background": True, "title": bg["invitation"]["title"], "answered": bg["answered"]}
+        if self.finished:
+            return {"background": False, "finished": self.finished}
+        try:
+            inv = self.invitation(career)
+        except BridgeUnavailable:
+            inv = None
+        return {"background": False, "invitation": {"title": inv["title"], "date": inv["date"]} if inv else None}

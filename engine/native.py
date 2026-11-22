@@ -78,6 +78,8 @@ class NativeSync:
         self.audits: list[tuple[float, str, list]] = []  # recent (time, action, people): FM may log before or after
         self.squad: set[str] = set()
         self.current: dict | None = None     # the press question on screen right now (see _refresh_options)
+        self.pinned_speak: str | None = None    # a dialog held in the background (press.py), read instead of the screen's
+        self.pinned_session: str | None = None
 
     # --- polling -----------------------------------------------------------------
     def poll(self, career: Career) -> None:
@@ -102,7 +104,7 @@ class NativeSync:
 
     def _refresh_options(self) -> None:
         """Caches the dialog currently on screen (quickly while a dialog is in use)."""
-        target = self.bridge.last_target(SPEAK_TO_TYPE)
+        target = self.pinned_speak or self.bridge.last_target(SPEAK_TO_TYPE)
         if not target:
             return
         now = time.monotonic()
@@ -152,7 +154,7 @@ class NativeSync:
 
     def _press_journalists(self) -> set[str]:
         """Journalists in the press conference that is open (empty when none is)."""
-        session = self.bridge.last_target(PRESS_TYPE)
+        session = self.pinned_session or self.bridge.last_target(PRESS_TYPE)
         if not session:
             return set()
         out = set()

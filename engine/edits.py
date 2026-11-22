@@ -85,6 +85,18 @@ class GameEdits:
                 drop = -int(20 * (p.get("weight") or 1.5))
                 self._plan(career, career.manager_id, career.manager_name, "当前声望", drop,
                            f"社交媒体风波上了新闻：「{p.get('title')}」", f"rep:{e.get('event_key')}")
+        for e in store.events("press_conference", limit=10):  # how the manager came across in the press room
+            p = e["payload"] or {}
+            if _days(e["game_date"], career.date) > 2:
+                continue
+            tones = [a.get("tone") for a in p.get("answers") or []]
+            balance = tones.count("积极") - tones.count("消极")
+            delta = -25 if p.get("walked_out") else 15 if balance >= 3 else -15 if balance <= -3 else 0
+            if delta:
+                why = ("提前离开新闻发布会" if p.get("walked_out") else
+                       f"新闻发布会上{'积极自信' if delta > 0 else '态度消极'}（{len(tones)} 个回答）")
+                self._plan(career, career.manager_id, career.manager_name, "当前声望", delta, why,
+                           f"rep:{e.get('event_key')}")
         for p in roster.at_club(career):
             rel = store.relation(p["id"])
             warmth = rel["trust"] + rel["liking"]
