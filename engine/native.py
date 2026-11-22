@@ -36,6 +36,9 @@ from .fmvalue import decode, target_pairs
 SPEAK_TO_TYPE = 102        # SpeakToReference: topics and options
 CONVERSATION_TYPE = 23     # ConversationEditSessionReference: the open conversation
 PRESS_TYPE = 81            # PressConferenceEditSessionReference: the press conference in progress
+CLOSED_SECONDS = 30              # a dialog FM closed is not read for this long (the same target may be reused later)
+LEAVE_EVENTS = {31, 827217993}   # end chat / leave the press conference, storm out
+PRESS_ATTENDED = 876038760       # sent by FM's interface when the manager leaves a press conference
 MATCH_TYPES = {61, 64}     # match and match-tactics targets: a match is being played or has just ended
 MATCH_QUIET_SECONDS = 240  # the engine leaves FM alone this long after any match activity
 PENDING_SECONDS = 8        # wait this long for FM's audit event before writing
@@ -83,7 +86,14 @@ class NativeSync:
         self.pinned_speak: str | None = None    # a dialog held in the background (press.py), read instead of the screen's
         self.pinned_session: str | None = None
         self.observers: list = []               # called with every event FM's interface sends
+        self.closed: dict[tuple, float] = {}      # SpeakTo targets FM has just closed (left, walked out) -> when
+        self.closed_at = 0.0
         self.match_seen = 0.0                   # last time the match screen talked to the engine (see match_quiet)
+
+    @staticmethod
+    def _key(target: str | None) -> tuple | None:
+        pairs = target_pairs(target or "")
+        return tuple(sorted(pairs.items())) if pairs else None
 
     def match_quiet(self) -> bool:
         """True during a match and for a few minutes after it, while FM settles the result: the
@@ -96,8 +106,16 @@ class NativeSync:
             seen = self.bridge.events(0)
             self.since = max((e["seq"] for e in seen), default=0)
             return
+        events = self.bridge.events(self.since)
+        for ev in events:  # first: a dialog FM has just closed must not be read again (that crashed the game)
+            pairs = target_pairs(ev.get("target", ""))
+            if ev.get("id") in LEAVE_EVENTS and pairs.get(" 011") == SPEAK_TO_TYPE or ev.get("id") == PRESS_ATTENDED:
+                key = tuple(sorted(pairs.items())) if pairs.get(" 011") == SPEAK_TO_TYPE else self._key(self.speak_target)
+                if key:
+                    self.closed[key] = time.monotonic()
+                self.current, self.closed_at = None, time.monotonic()
         self._refresh_options()
-        for ev in self.bridge.events(self.since):
+        for ev in events:
             self.since = max(self.since, ev["seq"])
             if target_pairs(ev.get("target", "")).get(" 011") in MATCH_TYPES:
                 self.match_seen = time.monotonic()
@@ -122,6 +140,9 @@ class NativeSync:
         """Caches the dialog currently on screen (quickly while a dialog is in use)."""
         target = self.pinned_speak or self.bridge.last_target(SPEAK_TO_TYPE)
         if not target:
+            return
+        if time.monotonic() - self.closed.get(self._key(target), -1e9) < CLOSED_SECONDS:  # FM just closed it
+            self.current = None
             return
         now = time.monotonic()
         # Around a match only a dialog the interface has just opened (e.g. the post-match press conference)

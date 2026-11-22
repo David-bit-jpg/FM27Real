@@ -322,7 +322,7 @@ static void post_engine(NSString *path) {
     }] resume];
 }
 
-static void press_changed(BOOL active, BOOL dismissed) {
+static void press_changed(BOOL active, BOOL dismissed, BOOL ended) {
     NSView *host = g_panel.superview;
     if (active || dismissed) {
         g_press_quiet = 0;
@@ -343,7 +343,9 @@ static void press_changed(BOOL active, BOOL dismissed) {
         return;
     }
     g_press_was_active = NO;
-    if (!g_press_mode || ++g_press_quiet < 6) return;
+    // FM closed the conference (the manager left): put the panel away at once, before anything
+    // on it can act on the closed conference; otherwise wait a few quiet seconds between questions.
+    if (!g_press_mode || (!ended && ++g_press_quiet < 6)) return;
     g_press_mode = NO;
     g_chat_button.hidden = YES;
     set_visible(NO);
@@ -365,11 +367,12 @@ static void poll_press(void) {
         NSDictionary *j = (!e && d) ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
         BOOL ok = [j isKindOfClass:NSDictionary.class];
         BOOL active = ok && [j[@"active"] isEqual:@YES], dismissed = ok && [j[@"dismissed"] isEqual:@YES];
+        BOOL ended = ok && [j[@"ended"] isEqual:@YES];
         long unread = ok && [j[@"unread"] isKindOfClass:NSNumber.class] ? [j[@"unread"] longValue] : 0;
         (void)r;
         dispatch_async(dispatch_get_main_queue(), ^{
             g_press_inflight = NO;
-            press_changed(active, dismissed);
+            press_changed(active, dismissed, ended);
             // New messages: the button shows them when no profile is open and nothing else uses it.
             if (!g_press_mode && !g_focus && !g_visible) {
                 g_chat_button.hidden = unread <= 0;

@@ -129,7 +129,8 @@ class PressRoom:
         with self.lock:
             cur = self._sync()
             return {"active": bool(cur) and self.key not in self.dismissed,
-                    "dismissed": bool(cur) and self.key in self.dismissed}
+                    "dismissed": bool(cur) and self.key in self.dismissed,
+                    "ended": not cur and time.monotonic() - self.native.closed_at < 15}  # FM closed it: panel away now
 
     def resume(self) -> None:
         with self.lock:
