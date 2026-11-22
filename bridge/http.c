@@ -12,6 +12,8 @@
 //   GET /query?id=010baef4&type=PersonReference     every property of that type
 //   GET /query?target=<hex>&props=...               any serialized target (from a "target" value)
 //   GET /send?id=N&target=<hex>&data=<hex>          send an event to the engine as the interface does
+//   GET /editor                                     In-Game Editor fields on screen: [{label, value, key}]
+//   GET /editor/set?key=<hex>&data=<hex>            write a field value on the UI's own channel
 //
 // Property codes are 4 characters ("eman"; URL-encode spaces as %20) or
 // "#" + 8 hex digits.
@@ -175,6 +177,29 @@ static void handle(int fd) {
         }
         int ok = tap_send_event((uint32_t)strtoul(id, NULL, 10), t, tl, d, dl);
         respond(fd, ok ? 200 : 503, ok ? "{\"sent\":true}" : "{\"sent\":false}");
+        return;
+    }
+    if (!strcmp(target, "/editor")) {
+        char *body = tap_editor_json();
+        respond(fd, 200, body);
+        free(body);
+        return;
+    }
+    if (!strcmp(target, "/editor/set")) {
+        char ks[24] = "", dh[2100] = "";
+        if (!query || !param(query, "key", ks, sizeof ks) || !param(query, "data", dh, sizeof dh)) {
+            respond(fd, 400, "{\"error\":\"key and data required\"}"); return;
+        }
+        uint8_t d[1024];
+        int dl = 0;
+        for (const char *p = dh; p[0] && p[1] && dl < (int)sizeof d; p += 2) {
+            int hi = hexval(p[0]), lo = hexval(p[1]);
+            if (hi < 0 || lo < 0) break;
+            d[dl++] = (uint8_t)(hi * 16 + lo);
+        }
+        int ok = tap_editor_set(strtoull(ks, NULL, 16), d, dl);
+        respond(fd, ok == 1 ? 200 : (ok < 0 ? 404 : 503),
+                ok == 1 ? "{\"written\":true}" : (ok < 0 ? "{\"error\":\"not an open editor field\"}" : "{\"written\":false}"));
         return;
     }
     if (!strcmp(target, "/focus")) {

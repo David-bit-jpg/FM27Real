@@ -43,7 +43,7 @@ static size_t g_record_index_off, g_record_type_off;
 static size_t g_receiver_list_offset;      // GameReceiver.m_resusableTypedList
 static size_t g_receiver_callback_offset;  // GameReceiver.m_onChannelDataChange
 static size_t g_list_items_offset, g_list_size_offset;
-static const MethodInfo *g_open_method, *g_actions_method, *g_send_method;
+static const MethodInfo *g_open_method, *g_actions_method, *g_send_method, *g_update_method;
 static int32_t g_mode_add_node = -1, g_mode_remove_node = -1, g_mode_close = -1, g_mode_set_property = -1;
 static int g_action_size;  // sizeof(ChannelAction)
 static u64 g_plugin;       // the IGamePlugin native wrapper instance
@@ -757,6 +757,83 @@ char *tap_last_target(uint32_t type) {
     return th[0] ? strdup(th) : NULL;
 }
 
+// --- the UI's channel tree (for the In-Game Editor) -------------------------------
+// The UI builds its bindings as a tree of channel nodes: AddNode(key, parent),
+// SetPropertyID(key, prop). An editor field is a node whose children carry its
+// label (eman) and value (lvtp). We keep the UI's nodes and their latest values,
+// so a field can be found by its label and written on the UI's own channel,
+// exactly as the editor does when the player types a value. Never opens anything.
+#define NODES 16384
+static struct node { u64 key, parent; uint32_t prop; int live; char value[96]; } g_nodes[NODES];
+static pthread_mutex_t g_node_lock = PTHREAD_MUTEX_INITIALIZER;
+#define CODE_EMAN 0x6e616d65u
+#define CODE_LVTP 0x7074766cu
+
+static struct node *node_slot(u64 key, int create) {
+    size_t i = (size_t)(key ^ (key >> 29)) % NODES;
+    for (int n = 0; n < NODES; n++, i = (i + 1) % NODES) {
+        if (g_nodes[i].key == key) return &g_nodes[i];
+        if (!g_nodes[i].key || (!g_nodes[i].live && create)) {
+            if (!create) return NULL;
+            memset(&g_nodes[i], 0, sizeof g_nodes[i]);
+            g_nodes[i].key = key;
+            return &g_nodes[i];
+        }
+    }
+    return NULL;
+}
+
+static void node_action(u64 key, int32_t mode, u64 extra) {
+    if (is_ours(key) || !key) return;
+    pthread_mutex_lock(&g_node_lock);
+    struct node *n = node_slot(key, mode == g_mode_add_node || mode == g_mode_set_property);
+    if (n) {
+        if (mode == g_mode_add_node) { n->parent = extra; n->live = 1; }
+        else if (mode == g_mode_set_property) { n->prop = (uint32_t)extra; n->live = 1; }
+        else if (mode == g_mode_remove_node) { n->live = 0; }
+    }
+    pthread_mutex_unlock(&g_node_lock);
+}
+
+static void node_value(u64 key, const char *value) {
+    pthread_mutex_lock(&g_node_lock);
+    struct node *n = node_slot(key, 0);
+    if (n && n->live && (n->prop == CODE_EMAN || n->prop == CODE_LVTP)) strlcpy(n->value, value, sizeof n->value);
+    pthread_mutex_unlock(&g_node_lock);
+}
+
+char *tap_editor_json(void) {
+    JsonBuf j = {0};
+    json_raw(&j, "[");
+    int first = 1;
+    static struct node *values[4096];
+    pthread_mutex_lock(&g_node_lock);
+    int nvalues = 0;
+    for (int i = 0; i < NODES && nvalues < 4096; i++)
+        if (g_nodes[i].key && g_nodes[i].live && g_nodes[i].prop == CODE_LVTP) values[nvalues++] = &g_nodes[i];
+    for (int i = 0; i < NODES; i++) {
+        struct node *label = &g_nodes[i];
+        if (!label->key || !label->live || label->prop != CODE_EMAN || !label->value[0]) continue;
+        for (int k = 0; k < nvalues; k++) {
+            struct node *v = values[k];
+            if (v->parent != label->parent) continue;
+            char key[24];
+            snprintf(key, sizeof key, "%016llx", (unsigned long long)v->key);
+            json_raw(&j, first ? "{\"label\":" : ",{\"label\":");
+            json_str(&j, label->value);
+            json_raw(&j, ",\"value\":");
+            json_str(&j, v->value);
+            json_raw(&j, ",\"key\":");
+            json_str(&j, key);
+            json_raw(&j, "}");
+            first = 0;
+        }
+    }
+    pthread_mutex_unlock(&g_node_lock);
+    json_raw(&j, "]");
+    return j.data;
+}
+
 // --- hooks ---------------------------------------------------------------------
 // SendDataResponse(Span<ulong> keys, Span<uint> generations, Span<byte> data)
 static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
@@ -805,6 +882,7 @@ static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h
         fourcc_string(key_get(keys[i]), cc);
         if (i < nv) string_guarded(vals[i], val, sizeof val);
         else strlcpy(val, "?", sizeof val);
+        node_value(keys[i], val);
         tap_printf("  %016llx %s gen=%u = %s\n", keys[i], cc, i < ng ? gens[i] : 0, val);
     }
     fflush(g_tap);
@@ -894,6 +972,9 @@ static void hook_actions(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h)
         memcpy(&key, acts + 24 * i, 8);
         memcpy(&mode, acts + 24 * i + 16, 4);
         if (mode == g_mode_close && !is_ours(key)) open_add(key_record(key), -1);
+        u64 extra;
+        memcpy(&extra, acts + 24 * i + 8, 8);
+        node_action(key, mode, extra);
     }
     if (g_tap && !t_busy && n) {  // record the UI's own actions (for learning its protocols)
         t_busy = 1;
@@ -1007,6 +1088,65 @@ static void send_step(void) {
     pthread_mutex_unlock(&g_out.m);
 }
 
+// Writing a value on one of the UI's own channels (UpdateChannelData), main thread.
+static struct {
+    pthread_mutex_t lock, m;
+    pthread_cond_t done;
+    int pending, finished;
+    u64 key;
+    int dlen;
+    uint8_t data[1024];
+} g_upd = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, 0, {0}};
+
+static void update_step(void) {
+    pthread_mutex_lock(&g_upd.m);
+    if (g_upd.pending && g_orig_update && g_update_method && g_plugin) {
+        uint8_t action[24] = {0};
+        int32_t mode = 4;  // UpdateChannelData
+        memcpy(action, &g_upd.key, 8);
+        memcpy(action + 16, &mode, 4);
+        uint8_t span[16] = {0};
+        u64 dp = (u64)g_upd.data;
+        int32_t dl = g_upd.dlen;
+        memcpy(span + g_span.ptr_off, &dp, 8);
+        memcpy(span + g_span.len_off, &dl, 4);
+        u64 s0, s1;
+        memcpy(&s0, span, 8);
+        memcpy(&s1, span + 8, 8);
+        g_orig_update(g_plugin, (u64)action, s0, s1, (u64)g_update_method, 0, 0, 0);
+        if (g_tap) { tap_printf("U(ours) key=%016llx bytes=%d\n", (unsigned long long)g_upd.key, dl); fflush(g_tap); }
+        g_upd.pending = 0;
+        g_upd.finished = 1;
+        pthread_cond_broadcast(&g_upd.done);
+    }
+    pthread_mutex_unlock(&g_upd.m);
+}
+
+int tap_editor_set(uint64_t key, const uint8_t *data, int dl) {
+    if (!tap_ready() || !g_orig_update || !g_update_method || dl <= 0 || dl > 1024) return 0;
+    pthread_mutex_lock(&g_node_lock);  // only a live editor value channel the UI opened
+    struct node *n = node_slot(key, 0);
+    int ok_key = n && n->live && n->prop == CODE_LVTP;
+    pthread_mutex_unlock(&g_node_lock);
+    if (!ok_key) return -1;
+    pthread_mutex_lock(&g_upd.lock);
+    pthread_mutex_lock(&g_upd.m);
+    g_upd.key = key;
+    g_upd.dlen = dl;
+    memcpy(g_upd.data, data, (size_t)dl);
+    g_upd.pending = 1;
+    g_upd.finished = 0;
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += 5;
+    while (!g_upd.finished && pthread_cond_timedwait(&g_upd.done, &g_upd.m, &until) == 0) {}
+    int ok = g_upd.finished;
+    g_upd.pending = 0;
+    pthread_mutex_unlock(&g_upd.m);
+    pthread_mutex_unlock(&g_upd.lock);
+    return ok;
+}
+
 int tap_send_event(uint32_t id, const uint8_t *target, int tl, const uint8_t *data, int dl) {
     if (!tap_ready() || !g_orig_send || !g_send_method || tl <= 0 || tl > 96 || dl < 0 || dl > 1024) return 0;
     pthread_mutex_lock(&g_out.lock);
@@ -1031,6 +1171,7 @@ static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     if (!g_plugin) g_plugin = a;
     query_step();
     send_step();
+    update_step();
 }
 
 // --- installation --------------------------------------------------------------
@@ -1129,6 +1270,7 @@ void tap_install(void) {
     g_open_method = open;
     g_actions_method = actions;
     g_send_method = send;
+    g_update_method = update;
     g_receiver_list_offset = field_offset(receiver, "m_resusableTypedList");
     g_receiver_callback_offset = field_offset(receiver, "m_onChannelDataChange");
     g_record_index_off = field_offset(g_record_ref_class, "m_index");
@@ -1169,6 +1311,8 @@ uint32_t tap_focus(uint8_t kind) { (void)kind; return 0; }
 char *tap_events_json(uint64_t since) { (void)since; return strdup("[]"); }
 char *tap_last_target(uint32_t type) { (void)type; return NULL; }
 int tap_send_event(uint32_t id, const uint8_t *t, int tl, const uint8_t *d, int dl) { (void)id; (void)t; (void)tl; (void)d; (void)dl; return 0; }
+char *tap_editor_json(void) { return strdup("[]"); }
+int tap_editor_set(uint64_t key, const uint8_t *d, int dl) { (void)key; (void)d; (void)dl; return 0; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }
 uint32_t fourcc_parse(const char *s) { return (uint32_t)strtoul(s + 1, NULL, 16); }

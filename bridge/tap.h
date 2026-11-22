@@ -43,3 +43,12 @@ uint32_t fourcc_parse(const char *s);
 // player clicks (IGamePlugin.SendEvent), on the main thread. Blocks up to 5 s.
 // Returns 1 when sent. Never sends late: on timeout nothing is sent.
 int tap_send_event(uint32_t id, const uint8_t *target, int target_len, const uint8_t *data, int data_len);
+
+// The In-Game Editor fields the UI currently shows: [{label, value, key}] (key =
+// the UI's own value channel). Built only from what the UI did; opens nothing.
+char *tap_editor_json(void);
+
+// Writes a value on one of those value channels, exactly as the editor does when
+// the player edits the field (main thread, blocks up to 5 s). Returns 1 when
+// written, -1 when the key is not a live editor value channel, 0 otherwise.
+int tap_editor_set(uint64_t key, const uint8_t *data, int data_len);
