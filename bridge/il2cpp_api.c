@@ -1,6 +1,11 @@
 #include "il2cpp_api.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#define dlsym(h, name) ((void *)GetProcAddress((HMODULE)(h), name))
+#else
 #include <dlfcn.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 

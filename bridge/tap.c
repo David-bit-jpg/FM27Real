@@ -6,11 +6,13 @@
 // runtime's code-signing checks are unaffected. Protocol: docs/PROTOCOL.md.
 #include "tap.h"
 
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
+#include "platform.h"
+
 #include <pthread.h>
 #include <setjmp.h>
+#if !defined(_WIN32)
 #include <signal.h>
+#endif
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +22,7 @@
 #include "json.h"
 #include "log.h"
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) || defined(_WIN64)
 
 typedef uint64_t u64;
 typedef void (*Fn8)(u64, u64, u64, u64, u64, u64, u64, u64);
@@ -78,23 +80,38 @@ static void hex(const uint8_t *p, int n, char *out, size_t cap) {
     out[o] = 0;
 }
 
-static int safe_read(const void *addr, void *out, size_t n) {
-    mach_vm_size_t got = 0;
-    return mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)addr, n, (mach_vm_address_t)out, &got) ==
-               KERN_SUCCESS && got == n;
-}
+static int safe_read(const void *addr, void *out, size_t n) { return platform_safe_read(addr, out, n); }
 
-// Span<T> arguments arrive as two registers each: data pointer, then length.
+// Span<T> arguments arrive as two registers each (data pointer, then length) on
+// arm64; on Windows x64 as one pointer to the 16-byte struct (see platform.h).
 static void span_arg(const u64 *x, int reg, const void **data, int *len) {
     uint8_t raw[16];
+#if SPAN_SLOTS == 1
+    if (!safe_read((const void *)x[reg], raw, sizeof raw)) memset(raw, 0, sizeof raw);
+#else
     u64 pair[2] = {x[reg], x[reg + 1]};
     memcpy(raw, pair, sizeof raw);  // memcpy, not pointer casts: avoids aliasing UB
+#endif
     void *p;
     int32_t n;
     memcpy(&p, raw + g_span.ptr_off, sizeof p);
     memcpy(&n, raw + g_span.len_off, sizeof n);
     *data = p;
     *len = n;
+}
+
+// Puts a span (pointer, length) into argument slot(s) at pos for calling an original
+// method; store keeps the 16-byte struct alive for the call where it goes by pointer.
+static void put_span(u64 *x, int pos, const void *p, int32_t n, uint8_t store[16]) {
+    memset(store, 0, 16);
+    u64 pv = (u64)p;
+    memcpy(store + g_span.ptr_off, &pv, 8);
+    memcpy(store + g_span.len_off, &n, 4);
+#if SPAN_SLOTS == 1
+    x[pos] = (u64)store;
+#else
+    memcpy(&x[pos], store, 16);
+#endif
 }
 
 // Copies up to cap bytes of a span; returns elements copied (0 if unreadable).
@@ -482,7 +499,12 @@ static void put_action(uint8_t *buf, int i, u64 key, u64 extra, int32_t mode) {
 }
 
 static void run_actions(uint8_t *buf, int n) {
-    if (n) g_orig_actions(g_plugin, (u64)buf, (u64)n, (u64)g_actions_method, 0, 0, 0, 0);
+    if (!n) return;
+    u64 x[8] = {g_plugin, 0, 0, 0, 0, 0, 0, 0};
+    uint8_t s0[16];
+    put_span(x, ARGPOS(1, 0), buf, n, s0);
+    x[ARGPOS(1, 1)] = (u64)g_actions_method;
+    g_orig_actions(x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
 }
 
 static void query_open_batch(void) {
@@ -501,7 +523,14 @@ static void query_open_batch(void) {
         put_action(acts, na++, key, (u64)prop, g_mode_set_property);  // then its property, then open
     }
     run_actions(acts, na);
-    if (n) g_orig_open(g_plugin, (u64)g_q.target, (u64)g_q.target_len, (u64)ch, (u64)n, (u64)g_open_method, 0, 0);
+    if (n) {
+        u64 x[8] = {g_plugin, 0, 0, 0, 0, 0, 0, 0};
+        uint8_t s0[16], s1[16];
+        put_span(x, ARGPOS(1, 0), g_q.target, g_q.target_len, s0);
+        put_span(x, ARGPOS(1, 1), ch, n, s1);
+        x[ARGPOS(1, 2)] = (u64)g_open_method;
+        g_orig_open(x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
+    }
 }
 
 static void query_close(void) {
@@ -577,16 +606,35 @@ static void query_step(void) {
 // unreadable, the fault must cost that one value, never the game: while a value
 // is encoded, SIGSEGV/SIGBUS jump back and the value becomes null. Outside the
 // guarded section the previous handlers (Unity's) run as before.
-static struct sigaction g_old_segv, g_old_bus;
-static __thread sigjmp_buf *t_guard;
+static __thread guard_buf *t_guard;
 static volatile int g_faults;
+
+#if defined(_WIN32)
+// Windows: a vectored handler sends the faulting thread to a trampoline that
+// jumps back to the guarded section (the jump runs on the thread's own stack).
+static __thread guard_buf *t_jump;
+static void guard_trampoline(void) { GUARD_JUMP(*t_jump); }
+
+static LONG CALLBACK fault_handler(EXCEPTION_POINTERS *e) {
+    if (!t_guard || e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
+    t_jump = t_guard;
+    t_guard = NULL;
+    g_faults++;
+    e->ContextRecord->Rsp = (e->ContextRecord->Rsp & ~(DWORD64)0xF) - 8;  // aligned as after a call
+    e->ContextRecord->Rip = (DWORD64)guard_trampoline;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static void install_fault_guard(void) { AddVectoredExceptionHandler(1, fault_handler); }
+#else
+static struct sigaction g_old_segv, g_old_bus;
 
 static void fault_handler(int sig, siginfo_t *info, void *ctx) {
     if (t_guard) {
-        sigjmp_buf *b = t_guard;
+        guard_buf *b = t_guard;
         t_guard = NULL;
         g_faults++;
-        siglongjmp(*b, 1);
+        GUARD_JUMP(*b);
     }
     struct sigaction *old = sig == SIGBUS ? &g_old_bus : &g_old_segv;
     if (old->sa_flags & SA_SIGINFO) {
@@ -606,12 +654,13 @@ static void install_fault_guard(void) {
     sigaction(SIGSEGV, &sa, &g_old_segv);
     sigaction(SIGBUS, &sa, &g_old_bus);
 }
+#endif
 
 static char *encode_guarded(Il2CppObject *v) {
     static __thread JsonBuf j;
-    sigjmp_buf here;
+    guard_buf here;
     memset(&j, 0, sizeof j);
-    if (sigsetjmp(here, 1)) {  // a fault while encoding: drop this value
+    if (GUARD_SET(here)) {  // a fault while encoding: drop this value
         free(j.data);
         memset(&j, 0, sizeof j);
         log_line("tap: unreadable value skipped (%d so far)", g_faults);
@@ -625,8 +674,8 @@ static char *encode_guarded(Il2CppObject *v) {
 
 // The value's own text, for the log; a fault costs only this value.
 static void string_guarded(Il2CppObject *v, char *buf, size_t n) {
-    sigjmp_buf here;
-    if (sigsetjmp(here, 1)) {
+    guard_buf here;
+    if (GUARD_SET(here)) {
         strlcpy(buf, "<unreadable>", n);
         return;
     }
@@ -893,7 +942,7 @@ static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h
     u64 x[8] = {a, b, c, d, e, f, g, h};
     const void *kp, *gp, *bp;
     int kn, gn, bn;
-    span_arg(x, 1, &kp, &kn);
+    span_arg(x, ARGPOS(1, 0), &kp, &kn);
     static u64 keys[2048];
     int nk = span_copy(kp, kn, 8, keys, sizeof keys);
     int ours = 0;
@@ -924,8 +973,8 @@ static void hook_response(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h
     }
     if (t_busy || !g_tap) return;
     t_busy = 1;
-    span_arg(x, 3, &gp, &gn);
-    span_arg(x, 5, &bp, &bn);
+    span_arg(x, ARGPOS(1, 1), &gp, &gn);
+    span_arg(x, ARGPOS(1, 2), &bp, &bn);
     static uint32_t gens[2048];
     int ng = span_copy(gp, gn, 4, gens, sizeof gens);
     int nv = decoded_values((Il2CppObject *)a, vals, 2048);
@@ -950,7 +999,7 @@ static void hook_event(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     u64 x[8] = {a, b, c, d, e, f, g, h};
     const void *bp;
     int bn;
-    span_arg(x, 2, &bp, &bn);
+    span_arg(x, ARGPOS(2, 0), &bp, &bn);
     uint8_t raw[64];
     char rh[140];
     hex(raw, span_copy(bp, bn, 1, raw, sizeof raw), rh, sizeof rh);
@@ -967,8 +1016,8 @@ static void hook_open(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
         u64 x[8] = {a, b, c, d, e, f, g, h};
         const void *tp, *cp;
         int tn, cn;
-        span_arg(x, 1, &tp, &tn);
-        span_arg(x, 3, &cp, &cn);
+        span_arg(x, ARGPOS(1, 0), &tp, &tn);
+        span_arg(x, ARGPOS(1, 1), &cp, &cn);
         uint8_t target[96];
         static uint8_t ch[16 * 4096];
         int tl = span_copy(tp, tn, 1, target, sizeof target);
@@ -1024,7 +1073,7 @@ static void hook_actions(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h)
     u64 x[8] = {a, b, c, d, e, f, g, h};
     const void *ap;
     int an;
-    span_arg(x, 1, &ap, &an);
+    span_arg(x, ARGPOS(1, 0), &ap, &an);
     static uint8_t acts[24 * 4096];
     int n = span_copy(ap, an, 24, acts, sizeof acts);
     for (int i = 0; i < n; i++) {
@@ -1075,7 +1124,7 @@ static void hook_update(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) 
         u64 x[8] = {a, b, c, d, e, f, g, h};
         const void *dp;
         int dn;
-        span_arg(x, 2, &dp, &dn);
+        span_arg(x, ARGPOS(2, 0), &dp, &dn);
         uint8_t raw[160];
         char rh[330], cc[16];
         hex(raw, span_copy(dp, dn, 1, raw, sizeof raw), rh, sizeof rh);
@@ -1093,8 +1142,8 @@ static void hook_send(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
         u64 x[8] = {a, b, c, d, e, f, g, h};
         const void *tp, *dp;
         int tn, dn;
-        span_arg(x, 2, &tp, &tn);
-        span_arg(x, 4, &dp, &dn);
+        span_arg(x, ARGPOS(2, 0), &tp, &tn);
+        span_arg(x, ARGPOS(2, 1), &dp, &dn);
         static uint8_t et[96], ed[1024];
         int etl = span_copy(tp, tn, 1, et, sizeof et), edl = span_copy(dp, dn, 1, ed, sizeof ed);
         remember_event((uint32_t)b, et, etl, ed, edl);
@@ -1104,8 +1153,8 @@ static void hook_send(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
         u64 x[8] = {a, b, c, d, e, f, g, h};
         const void *tp, *dp;
         int tn, dn;
-        span_arg(x, 2, &tp, &tn);
-        span_arg(x, 4, &dp, &dn);
+        span_arg(x, ARGPOS(2, 0), &tp, &tn);
+        span_arg(x, ARGPOS(2, 1), &dp, &dn);
         uint8_t t[96], raw[160];
         char th[200], rh[330];
         hex(t, span_copy(tp, tn, 1, t, sizeof t), th, sizeof th);
@@ -1132,14 +1181,12 @@ static struct {
 static void send_step(void) {
     pthread_mutex_lock(&g_out.m);
     if (g_out.pending && g_orig_send && g_send_method && g_plugin) {
-        u64 x[8] = {g_plugin, g_out.id, 0, 0, 0, 0, (u64)g_send_method, 0};
-        uint8_t span[2][16] = {{0}};
-        u64 tp = (u64)g_out.target, dp = (u64)g_out.data;
+        u64 x[8] = {g_plugin, g_out.id, 0, 0, 0, 0, 0, 0};
+        uint8_t span[2][16];
         int32_t tl = g_out.tlen, dl = g_out.dlen;
-        memcpy(span[0] + g_span.ptr_off, &tp, 8); memcpy(span[0] + g_span.len_off, &tl, 4);
-        memcpy(span[1] + g_span.ptr_off, &dp, 8); memcpy(span[1] + g_span.len_off, &dl, 4);
-        memcpy(&x[2], span[0], 16);
-        memcpy(&x[4], span[1], 16);
+        put_span(x, ARGPOS(2, 0), g_out.target, tl, span[0]);
+        put_span(x, ARGPOS(2, 1), g_out.data, dl, span[1]);
+        x[ARGPOS(2, 2)] = (u64)g_send_method;
         g_orig_send(x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
         if (g_tap) { tap_printf("S(ours) id=%u tlen=%d dlen=%d\n", g_out.id, tl, dl); fflush(g_tap); }
         g_out.pending = 0;
@@ -1166,15 +1213,12 @@ static void update_step(void) {
         int32_t mode = 4;  // UpdateChannelData
         memcpy(action, &g_upd.key, 8);
         memcpy(action + 16, &mode, 4);
-        uint8_t span[16] = {0};
-        u64 dp = (u64)g_upd.data;
+        uint8_t span[16];
         int32_t dl = g_upd.dlen;
-        memcpy(span + g_span.ptr_off, &dp, 8);
-        memcpy(span + g_span.len_off, &dl, 4);
-        u64 s0, s1;
-        memcpy(&s0, span, 8);
-        memcpy(&s1, span + 8, 8);
-        g_orig_update(g_plugin, (u64)action, s0, s1, (u64)g_update_method, 0, 0, 0);
+        u64 x[8] = {g_plugin, (u64)action, 0, 0, 0, 0, 0, 0};
+        put_span(x, ARGPOS(2, 0), g_upd.data, dl, span);
+        x[ARGPOS(2, 1)] = (u64)g_update_method;
+        g_orig_update(x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
         if (g_tap) { tap_printf("U(ours) key=%016llx bytes=%d\n", (unsigned long long)g_upd.key, dl); fflush(g_tap); }
         g_upd.pending = 0;
         g_upd.finished = 1;
@@ -1600,8 +1644,8 @@ static int nav_open_main(uint32_t record, const char *kind) {
 static void ige_step(void) {
     pthread_mutex_lock(&g_ige.m);
     if (g_ige.pending) {
-        sigjmp_buf here;
-        if (sigsetjmp(here, 1)) {
+        guard_buf here;
+        if (GUARD_SET(here)) {
             g_ige.result = -9;  // a fault inside: nothing more is attempted
             log_line("ige: fault while opening the editor");
         } else {
@@ -1671,7 +1715,7 @@ static int patch_vtable(Il2CppClass *klass, const MethodInfo *m, void *hook, Fn8
         void **slot = (void **)((uint8_t *)klass + off);
         if (!*orig) *orig = (Fn8)pair[0];
         if (!hook) return 1;
-        mach_vm_protect(mach_task_self(), (mach_vm_address_t)slot, 8, false, VM_PROT_READ | VM_PROT_WRITE);
+        platform_make_writable(slot);
         *slot = hook;
         patched++;
     }

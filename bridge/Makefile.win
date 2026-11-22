@@ -1,0 +1,16 @@
+# Builds the FM27Real bridge for Windows (x64) with mingw-w64, e.g. on macOS:
+#   brew install mingw-w64 && make -f Makefile.win
+OUT := ../Windows/bin/fm27real.dll
+SRC := $(filter-out overlay.m,$(wildcard *.c))
+HDR := $(wildcard *.h)
+CC := x86_64-w64-mingw32-gcc
+
+$(OUT): $(SRC) $(HDR)
+	mkdir -p ../Windows/bin
+	$(CC) -O2 -Wall -Wextra -shared -D__USE_MINGW_ANSI_STDIO=1 -include platform.h -Wno-format -Wno-missing-field-initializers -D_WIN32_WINNT=0x0A00 -o $@ $(SRC) \
+		-static -static-libgcc -lws2_32 -lbcrypt -lshell32 -Wl,--enable-stdcall-fixup
+
+clean:
+	rm -f $(OUT)
+
+.PHONY: clean

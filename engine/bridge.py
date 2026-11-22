@@ -23,11 +23,29 @@ import json
 import re
 import sys
 import urllib.error
+import os
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-FM_DIR = Path.home() / "Library/Application Support/Sports Interactive/Football Manager 27"
+def _fm_dir() -> Path:
+    """FM's user folder: ~/Library/Application Support/... on macOS, Documents\\Sports Interactive on Windows."""
+    if os.environ.get("FM27_DIR"):
+        return Path(os.environ["FM27_DIR"])
+    if os.name == "nt":
+        docs = None
+        try:  # Documents may be redirected (e.g. to OneDrive)
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0:  # CSIDL_PERSONAL
+                docs = Path(buf.value)
+        except Exception:
+            pass
+        return (docs or Path.home() / "Documents") / "Sports Interactive" / "Football Manager 27"
+    return Path.home() / "Library/Application Support/Sports Interactive/Football Manager 27"
+
+
+FM_DIR = _fm_dir()
 DATA_DIR = FM_DIR / "FM27Real"
 GRAPHICS = FM_DIR / "graphics"
 BATCH = 40  # properties per request; large batches answer too slowly

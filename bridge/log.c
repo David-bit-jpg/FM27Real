@@ -1,5 +1,7 @@
 #include "log.h"
 
+#include "platform.h"
+
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -10,12 +12,29 @@ char g_data_dir[1024];
 static FILE *g_log;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
+#if defined(_WIN32)
+#include <shlobj.h>
+#endif
+
 void log_open(void) {
+#if defined(_WIN32)
+    // FM's folder on Windows: Documents\Sports Interactive\Football Manager 27 (Documents may be redirected)
+    char docs[MAX_PATH];
+    if (SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, docs) != S_OK) return;
+    char base[1024];
+    snprintf(base, sizeof base, "%s\\Sports Interactive", docs);
+    CreateDirectoryA(base, NULL);
+    snprintf(base, sizeof base, "%s\\Sports Interactive\\Football Manager 27", docs);
+    CreateDirectoryA(base, NULL);
+    snprintf(g_data_dir, sizeof g_data_dir, "%s\\FM27Real", base);
+    CreateDirectoryA(g_data_dir, NULL);
+#else
     const char *home = getenv("HOME");
     if (!home) return;
     snprintf(g_data_dir, sizeof g_data_dir,
              "%s/Library/Application Support/Sports Interactive/Football Manager 27/FM27Real", home);
     mkdir(g_data_dir, 0755);
+#endif
     g_log = data_file("bridge.log", "w");
 }
 

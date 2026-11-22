@@ -71,7 +71,8 @@ def save_settings(s: dict) -> None:
     fd = os.open(SETTINGS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # holds the API key
     with os.fdopen(fd, "w") as f:
         json.dump(s, f, ensure_ascii=False, indent=1)
-    os.chmod(SETTINGS_FILE, 0o600)
+    if os.name != "nt":
+        os.chmod(SETTINGS_FILE, 0o600)
 
 
 def public_settings(s: dict) -> dict:

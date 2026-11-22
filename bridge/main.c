@@ -5,8 +5,14 @@
 // the class inventory, then installs the data tap.
 //
 // Output folder: ~/Library/Application Support/Sports Interactive/Football Manager 27/FM27Real/
+#include "platform.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#endif
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -25,6 +31,15 @@
 static char g_game_assembly[1024];
 static atomic_bool g_game_assembly_seen;
 
+#if defined(_WIN32)
+// Windows: GameAssembly.dll is found by polling (the worker waits for it).
+static void *game_assembly_handle(void) {
+    HMODULE h = GetModuleHandleA("GameAssembly.dll");
+    if (h) atomic_store(&g_game_assembly_seen, true);
+    return (void *)h;
+}
+#else
+
 // Called by dyld for every image, including ones already loaded. Runs under
 // the dyld lock, so it only records the path; the worker does the dlopen.
 static void on_image_added(const struct mach_header *mh, intptr_t slide) {
@@ -38,6 +53,14 @@ static void on_image_added(const struct mach_header *mh, intptr_t slide) {
         atomic_store(&g_game_assembly_seen, true);
     }
 }
+
+static void *game_assembly_handle(void) {
+    if (!atomic_load(&g_game_assembly_seen)) return NULL;
+    void *h = dlopen(g_game_assembly, RTLD_NOLOAD | RTLD_LAZY);
+    if (!h) log_line("dlopen(NOLOAD) failed: %s", dlerror());
+    return h;
+}
+#endif
 
 static void on_exit_(void) { log_line("game process exiting (exit() called)"); }
 
@@ -53,10 +76,9 @@ static int dump_wanted(const char *file) {
 
 static void *worker(void *arg) {
     (void)arg;
-    for (int i = 0; i < 1200 && !atomic_load(&g_game_assembly_seen); i++) usleep(500000);
-    if (!atomic_load(&g_game_assembly_seen)) { log_line("GameAssembly never loaded; giving up"); return NULL; }
-    void *h = dlopen(g_game_assembly, RTLD_NOLOAD | RTLD_LAZY);
-    if (!h) { log_line("dlopen(NOLOAD) failed: %s", dlerror()); return NULL; }
+    void *h = NULL;
+    for (int i = 0; i < 1200 && !(h = game_assembly_handle()); i++) usleep(500000);
+    if (!h) { log_line("GameAssembly never loaded; giving up"); return NULL; }
     if (il2cpp_resolve(h)) { log_line("giving up: il2cpp exports missing"); return NULL; }
 
     // il2cpp_get_corlib only reads a global set during runtime init, so it is
@@ -87,11 +109,31 @@ static void *worker(void *arg) {
     return NULL;
 }
 
-__attribute__((constructor)) static void fm27real_init(void) {
+static void start(void) {
     log_open();
     log_line("FM27Real bridge injected into pid %d", getpid());
     atexit(on_exit_);
+#if !defined(_WIN32)
     _dyld_register_func_for_add_image(on_image_added);
+#endif
     pthread_t t;
     if (pthread_create(&t, NULL, worker, NULL) == 0) pthread_detach(t);
 }
+
+#if defined(_WIN32)
+// Loaded into fm.exe by Windows/launch.ps1 (LoadLibrary in a remote thread).
+// DllMain runs under the loader lock: only start the worker thread here.
+static DWORD WINAPI start_thread(LPVOID arg) { (void)arg; start(); return 0; }
+
+BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved) {
+    (void)reserved;
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(inst);
+        HANDLE t = CreateThread(NULL, 0, start_thread, NULL, 0, NULL);
+        if (t) CloseHandle(t);
+    }
+    return TRUE;
+}
+#else
+__attribute__((constructor)) static void fm27real_init(void) { start(); }
+#endif

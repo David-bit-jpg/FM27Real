@@ -19,14 +19,26 @@
 // "#" + 8 hex digits.
 #include "http.h"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
+#include "platform.h"
+
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
+#if defined(_WIN32)
+#include <ws2tcpip.h>
+#define net_close closesocket
+#define net_read(fd, b, n) recv((SOCKET)(fd), (char *)(b), (int)(n), 0)
+#define net_write(fd, b, n) send((SOCKET)(fd), (const char *)(b), (int)(n), 0)
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <unistd.h>
+#define net_close close
+#define net_read read
+#define net_write write
+#endif
 
 #include "catalog.h"
 #include "il2cpp_api.h"
@@ -45,8 +57,8 @@ static void respond(int fd, int status, const char *body) {
                      "HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\n"
                      "Content-Length: %zu\r\nConnection: close\r\n\r\n",
                      status, reason, strlen(body));
-    write(fd, head, (size_t)n);
-    write(fd, body, strlen(body));
+    net_write(fd, head, (size_t)n);
+    net_write(fd, body, strlen(body));
 }
 
 static int hexval(char c) {
@@ -112,7 +124,7 @@ static void handle(int fd) {
     char req[8192];
     size_t got = 0;
     while (got < sizeof req - 1) {
-        ssize_t r = read(fd, req + got, sizeof req - 1 - got);
+        long r = (long)net_read(fd, req + got, sizeof req - 1 - got);
         if (r <= 0) break;
         got += (size_t)r;
         req[got] = 0;
@@ -334,31 +346,39 @@ static void handle(int fd) {
 static void *serve(void *arg) {
     (void)arg;
     il2cpp_thread_attach(il2cpp_domain_get());  // handlers call into managed code
-    int s = socket(AF_INET, SOCK_STREAM, 0);
+#if defined(_WIN32)
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+    int s = (int)socket(AF_INET, SOCK_STREAM, 0);
     int on = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&on, sizeof on);
     struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(API_PORT)};
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // never reachable from the network
     if (bind(s, (struct sockaddr *)&addr, sizeof addr) || listen(s, 8)) {
         log_line("http: cannot listen on 127.0.0.1:%d", API_PORT);
-        close(s);
+        net_close(s);
         return NULL;
     }
     log_line("http: listening on 127.0.0.1:%d", API_PORT);
     for (;;) {
-        int fd = accept(s, NULL, NULL);
+        int fd = (int)accept(s, NULL, NULL);
         if (fd < 0) continue;
         handle(fd);
-        close(fd);
+        net_close(fd);
     }
     return NULL;
 }
 
 void http_start(void) {
-    for (int i = 0; i < 16; i++) snprintf(g_token + 2 * i, 3, "%02x", arc4random() & 0xff);
+    uint8_t rnd[16];
+    platform_random(rnd, sizeof rnd);
+    for (int i = 0; i < 16; i++) snprintf(g_token + 2 * i, 3, "%02x", rnd[i]);
     FILE *f = data_file("api.json", "w");
     if (f) {
-        fchmod(fileno(f), 0600);  // token: readable by this user only
+#if !defined(_WIN32)
+        fchmod(fileno(f), 0600);  // token: readable by this user only (Windows: the user's own Documents)
+#endif
         fprintf(f, "{\"url\":\"http://127.0.0.1:%d\",\"token\":\"%s\"}\n", API_PORT, g_token);
         fclose(f);
     }

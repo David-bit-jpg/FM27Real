@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from typing import Protocol
 
-CLAUDE_MODEL = "claude-opus-5-5"
+CLAUDE_MODEL = "claude-haiku-5-5"  # the lowest token cost; Opus 5.5 or Sonnet 5.5 can be set in settings
 CLAUDE_EFFORT = "low"  # chat replies: short and latency-sensitive
 
 

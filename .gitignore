@@ -1,6 +1,7 @@
 .DS_Store
 build/
 *.dylib
+!MacOS/bin/*.dylib
 *.o
 .build/
 DerivedData/
@@ -9,3 +10,6 @@ xcuserdata/
 .env
 __pycache__/
 *.pyc
+
+# local install settings
+Windows/config.json
