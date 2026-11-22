@@ -76,6 +76,18 @@
   .ok { color: var(--good); } .bad { color: var(--bad); }
   .empty { color: var(--muted); padding: 30px 14px; text-align: center; }
 
+  .press { display: flex; flex-direction: column; height: 100%; }
+  .press-head { display: flex; gap: 12px; align-items: center; padding: 14px; border-bottom: 1px solid var(--line); }
+  .press-head .name { font-size: 16px; font-weight: 650; }
+  .press-head .sub { color: var(--muted); font-size: 12px; }
+  .press .q { margin: 14px; padding: 12px 14px; border-radius: 14px; background: #2f5fd0; color: #fff; font-size: 15px; line-height: 1.5; }
+  .press .q.pending { opacity: .75; }
+  .press .orig { margin: -6px 16px 8px; color: var(--muted); font-size: 11px; }
+  .press .log { flex: 1; }
+  .press .msg.j { background: #2f5fd0; color: #fff; }
+  .press .done { align-self: center; color: var(--good); font-size: 12px; margin: 8px 0; }
+  .press .foot { display: flex; justify-content: space-between; padding: 0 14px 10px; color: var(--muted); font-size: 12px; }
+  .press .foot button { background: none; border: 0; color: var(--muted); text-decoration: underline; font-size: 12px; padding: 0; }
   .feed { padding: 4px 0 16px; }
   .card { margin: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
   .card .meta { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
@@ -110,7 +122,8 @@
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
-  zh: { phone: "主教练手机", messages: "消息", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
+  zh: { phone: "主教练手机", messages: "消息", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
+        pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
         potm: "全场最佳", scorers: "进球", showAll: "显示全部收件箱", showImportant: "只看重要的", results: { "赢了": "胜", "输了": "负", "打平": "平" }, settings: "设置", recent: "最近聊天", squad: "一线队",
         noRecent: "还没有聊过天。点下面任何一名球员开始。", placeholder: "输入消息…", send: "发送",
         typing: "正在输入…", failed: "没发出去", retry: "重发", typingSpoken: "正在想怎么回答…", fmTalk: "FM 谈话",
@@ -120,7 +133,8 @@ const T = {
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
-  en: { phone: "Manager's phone", messages: "Messages", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
+  en: { phone: "Manager's phone", messages: "Messages", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
+        pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
         potm: "Player of the match", scorers: "Goals", showAll: "Show whole inbox", showImportant: "Important only", results: { "赢了": "W", "输了": "L", "打平": "D" }, settings: "Settings", recent: "Recent", squad: "First team",
         noRecent: "No conversations yet. Pick any player below to start.", placeholder: "Type a message…", send: "Send",
         typing: "typing…", failed: "Not sent", retry: "Retry", typingSpoken: "is thinking…", fmTalk: "FM conversation",
@@ -229,6 +243,62 @@ async function showFeed() {
   main.replaceChildren(el("div", { class: "feed" },
     el("div", { class: "filter" }, el("button", { onclick: () => { feedAll = !feedAll; showFeed(); } }, feedAll ? t("showImportant") : t("showAll"))),
     data.items.length ? data.items.map(card) : el("div", { class: "empty" }, t("noFeed"))));
+}
+
+// --- press conference ------------------------------------------------------------
+let pressTimer = null, pressKey = null;
+async function openPress() {
+  view = "press"; current = null; setHeader(t("press"), false);
+  if (pressTimer) clearInterval(pressTimer);
+  pressKey = null;
+  const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("loading")));
+  const render = async () => {
+    if (view !== "press") { clearInterval(pressTimer); pressTimer = null; return; }
+    let s;
+    try { s = await api("/api/press"); } catch (e) { return; }
+    if (!s.active) { return; }
+    const key = s.journalist.id + "|" + s.original;
+    const q = main.querySelector(".q");
+    if (key === pressKey && q) {  // same question: only update the question text once it is ready
+      if (s.ready && q.classList.contains("pending")) { q.textContent = s.question; q.classList.remove("pending"); main.querySelector("input").disabled = false; main.querySelector("form button").disabled = false; main.querySelector("input").focus(); }
+      const bl = main.querySelector(".press-head .bl"); if (bl) bl.textContent = s.body_language || "";
+      return;
+    }
+    pressKey = key;
+    const j = s.journalist;
+    const log = el("div", { class: "log" });
+    const input = el("input", { placeholder: t("pressPlaceholder"), autocomplete: "off", disabled: !s.ready });
+    const btn = el("button", { type: "submit", disabled: !s.ready }, t("send"));
+    const form = el("form", { class: "send" }, input, btn);
+    const left = el("span", {}, `${t("followLeft")} ${s.follow_ups_left}`);
+    s.thread.forEach(m => log.append(el("div", { class: "msg " + (m.who === "manager" ? "me" : "them j") }, m.text)));
+    form.addEventListener("submit", async ev => {
+      ev.preventDefault(); const text = input.value.trim(); if (!text) return;
+      input.value = ""; input.disabled = btn.disabled = true;
+      log.append(el("div", { class: "msg me" }, text));
+      const typing = el("div", { class: "typing" }, t("pressThinking")); log.append(typing); log.scrollTop = log.scrollHeight;
+      try {
+        const r = await api("/api/press/answer", { text });
+        typing.remove();
+        if (r.error) { log.append(el("div", { class: "failed" }, r.error)); input.disabled = btn.disabled = false; return; }
+        if (r.reply) log.append(el("div", { class: "msg them j" }, r.reply));
+        if (r.body_language) { const bl = main.querySelector(".press-head .bl"); if (bl) bl.textContent = r.body_language; }
+        if (r.done) { if (r.option) log.append(el("div", { class: "done" }, t("pressSent") + r.option)); pressKey = null; }
+        else { input.disabled = btn.disabled = false; input.focus(); }
+      } catch (e) { typing.remove(); log.append(el("div", { class: "failed" }, e.message)); input.disabled = btn.disabled = false; }
+      log.scrollTop = log.scrollHeight;
+    });
+    main.replaceChildren(el("div", { class: "press" },
+      el("div", { class: "press-head" }, avatar({ name: j.name, uid: j.uid }, true),
+        el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name" }, j.name),
+          el("div", { class: "sub" }, j.outlet), el("div", { class: "mood bl" }, s.body_language || ""))),
+      el("div", { class: "q" + (s.ready ? "" : " pending") }, s.ready ? s.question : t("pressWait")),
+      log, form,
+      el("div", { class: "foot" }, left, el("button", { type: "button", onclick: async () => { await api("/api/press/dismiss", {}); } }, t("pressNative")))));
+    if (s.ready) input.focus();
+  };
+  await render();
+  pressTimer = setInterval(render, 1000);
 }
 
 // --- chat ----------------------------------------------------------------------
@@ -370,14 +440,15 @@ $("tab-home").onclick = showHome;
 $("tab-settings").onclick = showSettings;
 $("tab-feed").onclick = showFeed;
 window.openFeed = showFeed;
+window.openPress = openPress;
 $("back").onclick = showHome;
 
 (async () => {
   try { const s = await api("/api/status"); lang = s.settings.language || "zh";
     if (!s.bridge) banner(t("noBridge")); }
   catch (e) { banner(e.message, true); }
-  const person = new URLSearchParams(location.search).get("person");
-  if (person) openPerson(person); else showHome();
+  const qs = new URLSearchParams(location.search), person = qs.get("person");
+  if (qs.get("press")) openPress(); else if (person) openPerson(person); else showHome();
 })();
 </script>
 </body>

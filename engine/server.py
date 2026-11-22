@@ -35,6 +35,7 @@ from .career import CareerTracker
 from .model import PRESETS, ModelError, detect_provider, provider_from_settings
 from .native import NativeSync
 from .story import StoryEngine
+from .press import PressRoom
 
 PORT = 27271
 LANGUAGES = ("zh", "en")
@@ -102,6 +103,7 @@ class Engine:
         self.token = secrets.token_hex(16)
         self.native = NativeSync(self.bridge)
         self.story = StoryEngine(self.bridge)
+        self.press = PressRoom(self.bridge, self.native)
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
@@ -176,6 +178,15 @@ def make_handler(engine: Engine):
                     return self._test(merge_settings(engine.settings, self._body()))
                 if method == "GET" and path == "/api/contacts":
                     return self._contacts()
+                if method == "GET" and path == "/api/press/active":
+                    return self._json(200, {"active": engine.press.active()})
+                if method == "GET" and path == "/api/press":
+                    return self._press_state()
+                if method == "POST" and path == "/api/press/answer":
+                    return self._press_answer()
+                if method == "POST" and path == "/api/press/dismiss":
+                    engine.press.dismiss()
+                    return self._json(200, {"ok": True})
                 if method == "GET" and path == "/api/feed":
                     return self._feed(bool(query.get("all")))
                 m = re.fullmatch(r"/api/person/([0-9a-f]{8})", path)
@@ -229,6 +240,14 @@ def make_handler(engine: Engine):
             """Recent club results and news, newest first (routine inbox items only with ?all=1)."""
             career = engine.careers.current()
             items = []
+            for e in career.store.events("press_answer", limit=60):
+                p = e["payload"] or {}
+                if not p.get("headline"):
+                    continue
+                j = p.get("journalist") or {}
+                items.append({"kind": "news", "date": e["game_date"], "weight": 1.5, "title": p["headline"],
+                              "body": f"{j.get('outlet', '')} {j.get('name', '')}：{p.get('question')}\n主教练：{p.get('answer')}",
+                              "people": [{"id": j["id"], "name": j.get("name")}] if j.get("id") else []})
             for e in career.store.events("match", limit=40) + career.store.events("news", limit=200):
                 p = e["payload"] or {}
                 if e["kind"] == "news" and p.get("weight", 1) < 1 and not everything:
@@ -244,6 +263,24 @@ def make_handler(engine: Engine):
                 items.append(item)
             items.sort(key=lambda i: (i["date"] or "", i["kind"] == "match"), reverse=True)
             self._json(200, {"items": items[:120]})
+
+        def _model(self):
+            try:
+                return provider_from_settings(engine.settings)
+            except ModelError:
+                return None
+
+        def _press_state(self) -> None:
+            self._json(200, engine.press.state(engine.careers.current(), self._model()))
+
+        def _press_answer(self) -> None:
+            text = str(self._body().get("text") or "").strip()[:1000]
+            if not text:
+                return self._json(400, {"error": "text required"})
+            model = self._model()
+            if model is None:
+                return self._json(502, {"error": "no model configured", "code": "model"})
+            self._json(200, engine.press.answer(engine.careers.current(), model, text))
 
         def _send_message(self, person_id: str) -> None:
             text = str(self._body().get("text") or "").strip()

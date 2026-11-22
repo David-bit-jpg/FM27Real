@@ -20,6 +20,7 @@ static NSButton *g_chat_button;  // shown on a player's profile page
 static uint32_t g_focus;     // person whose profile is open (0 if none)
 static WKWebView *g_web;
 static BOOL g_visible;
+static BOOL g_press_mode;    // covering FM's answer column during a press conference
 static const CGFloat kPanelWidth = 440, kMargin = 12;
 
 static IMP g_app_send_unity, g_win_send_unity;  // Unity's overrides
@@ -42,6 +43,11 @@ static BOOL panel_has_focus(void) {
 
 static NSRect panel_frame(NSView *host, BOOL shown) {
     NSRect b = host.bounds;
+    if (g_press_mode) {  // FM's press conference: the answer column on the right
+        CGFloat w = b.size.width * 0.28, x = b.size.width * 0.605;
+        CGFloat y = b.size.height * 0.015, h = b.size.height * (1 - 0.13 - 0.015);
+        return NSMakeRect(shown ? x : b.size.width + kMargin, y, w, h);
+    }
     CGFloat h = b.size.height - 2 * kMargin;
     CGFloat x = shown ? b.size.width - kPanelWidth - kMargin : b.size.width + kMargin;
     return NSMakeRect(x, kMargin, kPanelWidth, h);
@@ -178,7 +184,12 @@ static BOOL read_engine_file(void) {
 
 // Loads the engine page (optionally straight into a conversation), or an
 // explanation when the engine is not reachable.
+static void engine_load_query(NSString *extra);
 static void engine_load(uint32_t person) {
+    engine_load_query(person ? [NSString stringWithFormat:@"&person=%08x", person] : @"");
+}
+
+static void engine_load_query(NSString *extra) {
     if (!read_engine_file()) {
         g_ui_loaded = NO;
         [g_web loadHTMLString:offline_page() baseURL:nil];
@@ -201,7 +212,7 @@ static void engine_load(uint32_t person) {
                 return;
             }
             NSString *url = [NSString stringWithFormat:@"%@/ui?token=%@", base, token];
-            if (person) url = [url stringByAppendingFormat:@"&person=%08x", person];
+            url = [url stringByAppendingString:extra];
             [g_web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:url]]];
             g_ui_loaded = YES;
         });
@@ -267,6 +278,49 @@ static void poll_focus(void) {
     }
 }
 
+// Press conferences: the engine says when a question is on screen; the panel then
+// covers FM's answer column so the manager types instead of clicking.
+static BOOL g_press_inflight;
+static void press_changed(BOOL active) {
+    NSView *host = g_panel.superview;
+    if (active && !g_press_mode) {
+        log_line("overlay: press conference question on screen");
+        g_press_mode = YES;
+        if (g_visible) g_panel.animator.frame = panel_frame(host, YES);
+        else g_panel.frame = panel_frame(host, NO);
+        if (g_ui_loaded) [g_web evaluateJavaScript:@"openPress()" completionHandler:nil];
+        else engine_load_query(@"&press=1");
+        set_visible(YES);
+        g_chat_button.hidden = YES;
+    } else if (!active && g_press_mode) {
+        set_visible(NO);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (g_visible) return;
+            g_press_mode = NO;
+            g_panel.frame = panel_frame(g_panel.superview, NO);
+            if (g_ui_loaded) [g_web evaluateJavaScript:@"openHome()" completionHandler:nil];
+        });
+    }
+}
+
+static void poll_press(void) {
+    if (g_press_inflight || !read_engine_file()) return;
+    g_press_inflight = YES;
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
+        [NSURL URLWithString:[g_engine_url stringByAppendingString:@"/api/press/active"]]];
+    [req setValue:g_engine_token forHTTPHeaderField:@"X-Token"];
+    req.timeoutInterval = 3;
+    [[NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        NSDictionary *j = (!e && d) ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+        BOOL active = [j isKindOfClass:NSDictionary.class] && [j[@"active"] isEqual:@YES];
+        (void)r;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            g_press_inflight = NO;
+            press_changed(active);
+        });
+    }] resume];
+}
+
 static void install_on_main(int attempt) {
     NSWindow *w = game_window();
     if (!w) {
@@ -308,6 +362,7 @@ static void install_on_main(int attempt) {
     [host addSubview:g_chat_button positioned:NSWindowAbove relativeTo:nil];
     set_button_title(@"💬 私聊");
     [NSTimer scheduledTimerWithTimeInterval:0.4 repeats:YES block:^(NSTimer *t) { (void)t; poll_focus(); }];
+    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { (void)t; poll_press(); }];
 
     Class app_cls = object_getClass(NSApp), win_cls = object_getClass(w);
     BOOL a = swap_send_event(app_cls, NSApplication.class, (IMP)app_send_event, &g_app_send_unity, &g_app_send_base);

@@ -35,6 +35,7 @@ from .fmvalue import decode, target_pairs
 
 SPEAK_TO_TYPE = 102        # SpeakToReference: topics and options
 CONVERSATION_TYPE = 23     # ConversationEditSessionReference: the open conversation
+PRESS_TYPE = 81            # PressConferenceEditSessionReference: the press conference in progress
 PENDING_SECONDS = 8        # wait this long for FM's audit event before writing
 ACTIVE_SECONDS = 90        # after any dialog activity, re-read the dialog quickly
 TONES = {1: "积极", 2: "中立", 4: "消极"}
@@ -76,6 +77,7 @@ class NativeSync:
         self.pending: list[dict] = []
         self.audits: list[tuple[float, str, list]] = []  # recent (time, action, people): FM may log before or after
         self.squad: set[str] = set()
+        self.current: dict | None = None     # the press question on screen right now (see _refresh_options)
 
     # --- polling -----------------------------------------------------------------
     def poll(self, career: Career) -> None:
@@ -131,12 +133,34 @@ class NativeSync:
                 self.extra[p["neve"]] = _clean(p.get("lWh9"))
         npc = _props(tree.get("nzfT"))
         person = (npc.get("h1J ") or {}).get("ref") if isinstance(npc.get("h1J "), dict) else None
+        current = None
         if person:
             bubbles = [_props(b).get("nrtS") for b in npc.get("xj09") or []]
             question = " ".join(_clean(b) for b in bubbles if _clean(b))
             links = [l for b in bubbles if isinstance(b, dict) for l in b.get("links") or []]
-            self.by_person[person] = {"question": question, "links": links, "options": options,
-                                      "body": _clean(_props(npc.get("gmyy")).get("Xr0u")), "at": now}
+            entry = {"question": question, "links": links, "options": options,
+                     "body": _clean(_props(npc.get("gmyy")).get("Xr0u")), "at": now}
+            old = self.by_person.get(person)
+            if old and old.get("question") == question and not old.get("options"):
+                entry["options"] = {}  # this question was already answered
+            self.by_person[person] = entry
+            if question and entry["options"] and person in self._press_journalists():
+                current = {"person": person, "question": question, "links": links, "body": entry["body"],
+                           "options": entry["options"], "target": target,
+                           "extra": {e: t for e, t in self.extra.items()}}
+        self.current = current
+
+    def _press_journalists(self) -> set[str]:
+        """Journalists in the press conference that is open (empty when none is)."""
+        session = self.bridge.last_target(PRESS_TYPE)
+        if not session:
+            return set()
+        out = set()
+        for item in self.bridge.query_target(session, ["gM8V"]).get("gM8V") or []:
+            ferd = target_pairs((item or {}).get("target") or "").get("srep") if isinstance(item, dict) else None
+            if isinstance(ferd, int):
+                out.add(f"{ferd & 0xffffffff:08x}")
+        return out
 
     def _handle(self, career: Career, ev: dict) -> None:
         if target_pairs(ev.get("target", "")).get(" 011") == SPEAK_TO_TYPE:
