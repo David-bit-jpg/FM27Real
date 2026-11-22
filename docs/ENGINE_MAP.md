@@ -59,3 +59,25 @@ FM's natural feedback lives in the native `MORALE_MANAGER` and the interaction o
 - Mapped: handlers, events, properties, actions (tables above).
 - Not yet verified live: calling a player action (e.g. D2Rk on one player) with event 44; the exact data
   record per action (fields per handler are in `engine_handlers.json`).
+
+## Background conversations (verified live, 2026-11-21)
+
+FM's conversations can be run entirely in the background, with FM settling every consequence:
+
+1. Session: build the conversation session target as the UI does — type 23 with pairs
+   `edv2=null, rCj4=1, Guid, 'Eh I'=-1, YPbP=<manager>, gxgT=<topic code>, lCZi=<person>, hIQv=null`
+   (null = 0xff7fffff). Its `I69g` is the SpeakTo tree (type 102, diTS=3).
+2. Hold: open the SpeakTo tree with a held query (`/query?...&hold=1`) — FM only acts on choices while the
+   dialog is watched.
+3. Choose: event 34 to the SpeakTo target with `speak_choice(person, guid, p3fs)`; read `itca` again for the
+   person's reply (`nzfT.xj09`), body language (`nzfT.gmyy`) and the next options (`N2w4`).
+4. End: event 31 (p3fs present, no value), then `/release`.
+
+Example (reserve keeper, topic 1007 praise training): praise → "你一定是搞错人了!" (心生怀疑) → persuade
+("考虑到你最近没有上场机会…") → "这我倒是没法反驳。" (受到鼓舞) → end chat.
+
+The topic code (gxgT) chooses the interaction directly: 1000 criticise, 1007 praise training, 1026 praise last
+performance, 1030 congratulate, 1039 ask for advice, 1045–1056 congratulate on awards/caps, 1057 reassure
+about an injury, 1061 playing time, 1064 loan, 1066 asking price, 1067–1106 player goals and challenges
+(congratulate / encourage / criticise / promise), … — 91 types between 1000 and 1200 in
+`docs/interaction_topics.json` (heads and a sample line each; availability depends on the person).
