@@ -790,7 +790,7 @@ static void node_action(u64 key, int32_t mode, u64 extra) {
     if (n) {
         if (mode == g_mode_add_node) { n->parent = extra; n->live = 1; }
         else if (mode == g_mode_set_property) { n->prop = (uint32_t)extra; n->live = 1; }
-        else if (mode == g_mode_remove_node) { n->live = 0; }
+        else if (mode == g_mode_remove_node || mode == g_mode_close) { n->live = 0; }
     }
     pthread_mutex_unlock(&g_node_lock);
 }
@@ -1204,13 +1204,13 @@ static void layer_name(Il2CppObject *s, char *out, size_t n) {
     else strlcpy(out, "(null)", n);
 }
 
-// Closes the editor: PanelManager.CloseAll(IGEModule.m_highestIGELayer). With dry,
+// Closes the editor: PanelManager.CloseHighestPanel() (as Esc does). With dry,
 // only logs the layers involved.
 static int ige_close_main(int dry) {
     Il2CppClass *module_k = il2cpp_find_class("FM.UI.dll", "FM.UI", "IGEModule");
     Il2CppClass *pm_k = il2cpp_find_class("SI.Bindable.dll", "SI.Bindable", "PanelManager");
     Il2CppObject *module = first_instance(module_k), *pm = first_instance(pm_k);
-    const MethodInfo *close_all = method_with_params(pm_k, "CloseAll", 1);
+    const MethodInfo *close_all = method_with_params(pm_k, "CloseHighestPanel", 0);
     if (!module || !pm || !close_all) { log_line("ige: close: module %p pm %p method %p", (void *)module, (void *)pm, (void *)close_all); return -2; }
     size_t hi_off = field_offset(module_k, "m_highestIGELayer"), list_off = field_offset(module_k, "m_layersToProcess");
     Il2CppObject *hi = NULL, *arr = NULL;
@@ -1227,11 +1227,14 @@ static int ige_close_main(int dry) {
             layer_name(s, name, sizeof name);
             log_line("ige: layer to process [%llu] = %s", (unsigned long long)i, name);
         }
-    if (dry || !hi) return 1;
+    uint32_t card_id = 0, report_id = 0;
+    safe_read((uint8_t *)module + field_offset(module_k, "m_cardLayerPanelID"), &card_id, 4);
+    safe_read((uint8_t *)module + field_offset(module_k, "m_reportLayerPanelID"), &report_id, 4);
+    log_line("ige: editor panel ids card=%u report=%u", card_id, report_id);
+    if (dry) return 1;
     Il2CppException *exc = NULL;
-    void *args[1] = {&hi};  // Layer is a struct holding one string
-    il2cpp_runtime_invoke(close_all, pm, args, &exc);
-    log_line("ige: CloseAll(highest IGE layer)%s", exc ? " threw" : "");
+    il2cpp_runtime_invoke(close_all, pm, NULL, &exc);  // the editor is the highest panel right after opening
+    log_line("ige: CloseHighestPanel()%s", exc ? " threw" : "");
     return exc ? -5 : 1;
 }
 
