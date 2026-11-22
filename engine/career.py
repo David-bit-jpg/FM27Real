@@ -184,6 +184,23 @@ class CareerTracker:
             career.store.set_meta(k, v)
         return career
 
+    def reset_memory(self) -> Path:
+        """Forgets everything the engine remembers about the current save, for good: the memory and the save's
+        checkpoints are moved to a backup folder first (careers/<key>/reset-backups/<time>/), then wiped."""
+        with self._lock:
+            c = self._career
+            if not c:
+                raise BridgeUnavailable("no career loaded")
+            backup = self.root / c.key / "reset-backups" / time.strftime("%Y%m%d-%H%M%S")
+            backup.mkdir(parents=True, exist_ok=True)
+            c.store.backup_to(backup / c.store.path.name)
+            folder = self._checkpoint_dir(c.key, c.save_name)
+            if folder.exists():
+                shutil.move(str(folder), str(backup / "checkpoints"))
+            c.store.wipe(keep_meta=("session", "last_date", "manager_name", "team_name", "save_name", "start"))
+            self._checked = 0.0
+            return backup
+
     def _job_change(self, c: Career, team: str | None) -> None:
         old_id, old_name = c.team_id, c.team_name
         c.team_id, c.team_name = team, (self.bridge.name(team) if team else "") or NO_CLUB

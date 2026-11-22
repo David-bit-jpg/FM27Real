@@ -102,6 +102,17 @@ class Store:
             self._db.execute("ALTER TABLE events ADD COLUMN event_key TEXT")
         self._db.execute("CREATE UNIQUE INDEX IF NOT EXISTS events_key ON events (event_key) WHERE event_key IS NOT NULL")
 
+    def wipe(self, keep_meta: tuple[str, ...] = ()) -> None:
+        """Forgets everything (people, messages, memories, relations, canon, events, meta except keep_meta)."""
+        kept = {k: self.get_meta(k) for k in keep_meta}  # read before taking the lock (get_meta takes it too)
+        with self._lock:
+            for table in ("people", "messages", "memories", "relations", "canon", "events", "meta"):
+                self._db.execute(f"DELETE FROM {table}")
+            for k, v in kept.items():
+                if v is not None:
+                    self._db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (k, v))
+            self._db.commit()
+
     def close(self) -> None:
         with self._lock:
             self._db.close()
@@ -137,6 +148,10 @@ class Store:
         if not rows or not rows[0]["snapshot"]:
             return None, None
         return json.loads(rows[0]["snapshot"]), rows[0]["snapshot_date"]
+
+    def clear_snapshots(self) -> None:
+        """Person snapshots are read from FM again on next use (the people themselves are kept)."""
+        self._exec("UPDATE people SET snapshot_date = NULL")
 
     def put_snapshot(self, person_id: str, snapshot: dict, game_date: str) -> None:
         self._exec(

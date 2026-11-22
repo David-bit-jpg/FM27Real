@@ -130,11 +130,24 @@ class Engine:
         self._squad_cache: tuple[str, str, list] | None = None  # (career key, date, squad)
         self._squad_lock = threading.Lock()
 
+    def reread(self, career) -> None:
+        """Drops every cache so the next tick reads FM again: news, matches, squad, transfers, people."""
+        self.story.clock = None
+        self.story.names = {}
+        self.roster._cache = None
+        self.native.squad = set()
+        self.press.positions = ("", [])
+        self._squad_cache = None
+        self.edits_clock = None
+        for key in ("transfers_on", "dressing_room_checked", "edits_planned_on"):
+            career.store.set_meta(key, "")
+        career.store.clear_snapshots()
+
     def squad(self, career) -> list[dict]:
         """First-team players with name, position and portrait id (cached per game day)."""
         with self._squad_lock:
             c = self._squad_cache
-            if c and c[0] == career.key and c[1] == career.date:
+            if c and c[0] == (career.key, career.team_id) and c[1] == career.date:
                 return c[2]
             out = []
             for ref in self.bridge.team(career.team_id)["squad"]:
@@ -142,7 +155,7 @@ class Engine:
                 out.append({"id": ref, "name": _text(raw.get("eman")) or ref,
                             "position": _text(raw.get("SspP")) or "",
                             "uid": raw.get("dinu") if isinstance(raw.get("dinu"), int) else None})
-            self._squad_cache = (career.key, career.date, out)
+            self._squad_cache = ((career.key, career.team_id), career.date, out)
             return out
 
 
@@ -286,6 +299,13 @@ def make_handler(engine: Engine):
                         "record": career.manager_id, "name": career.manager_name, "kind": "person", "field": "当前声望",
                         "delta": 1, "reason": "测试修改", "status": "pending"}, event_key=f"edit:test:{career.clock}")
                     return self._json(200, {"queued": True})
+                if method == "POST" and path == "/api/reread":  # read everything from FM again (no model call)
+                    engine.reread(engine.careers.current())
+                    return self._json(200, {"ok": True})
+                if method == "POST" and path == "/api/reset":  # forget this save's memory (backed up first), read again
+                    backup = engine.careers.reset_memory()
+                    engine.reread(engine.careers.current())
+                    return self._json(200, {"ok": True, "backup": str(backup.relative_to(DATA_DIR))})
                 if method == "POST" and path == "/api/fm/open":  # FM's own page, as a clicked name link
                     body = self._body()
                     record = str(body.get("record") or "")
