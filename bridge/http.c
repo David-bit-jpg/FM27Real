@@ -264,6 +264,13 @@ static void handle(int fd) {
         free(j.data);
         return;
     }
+    if (!strcmp(target, "/release")) {
+        char id[16] = "";
+        if (!query || !param(query, "id", id, sizeof id)) { respond(fd, 400, "{\"error\":\"id required\"}"); return; }
+        int ok = tap_release((uint32_t)strtoul(id, NULL, 10));
+        respond(fd, ok ? 200 : 404, ok ? "{\"released\":true}" : "{\"released\":false}");
+        return;
+    }
     if (!strcmp(target, "/query")) {
         char id[32] = "", props[8192] = "", type[128] = "", target_hex[600] = "";
         int has_id = query && param(query, "id", id, sizeof id);
@@ -293,7 +300,17 @@ static void handle(int fd) {
                 if (hi < 0 || lo < 0) break;
                 t[tl++] = (uint8_t)(hi * 16 + lo);
             }
-            body = tap_query_target(t, tl, list, n);
+            char hold[8] = "";
+            if (param(query, "hold", hold, sizeof hold) && hold[0] == '1') {
+                uint32_t hid = 0;
+                char *values = tap_hold_target(t, tl, list, n, &hid);
+                if (values) {  // {"hold": id, "values": {...}}
+                    size_t len = strlen(values) + 64;
+                    body = malloc(len);
+                    snprintf(body, len, "{\"hold\":%u,\"values\":%s}", hid, values);
+                    free(values);
+                } else body = NULL;
+            } else body = tap_query_target(t, tl, list, n);
         } else {
             body = tap_query((uint32_t)strtoul(id, NULL, 16), list, n);
         }

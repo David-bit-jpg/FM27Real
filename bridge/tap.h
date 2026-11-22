@@ -70,3 +70,8 @@ int tap_editor_tab(int set, int index);
 // with click, clicks match `nth` (negative counts from the end). Returns the number
 // of matches (find) or 1 (clicked); < 0 on failure.
 int tap_ui_click(const char *text, int click, int nth);
+
+// Like tap_query_target, but the channels stay open (watched) until tap_release(id):
+// FM acts on some events only while their dialog is watched, as the UI does.
+char *tap_hold_target(const uint8_t *target, int target_len, const uint32_t *props, int n, uint32_t *hold_id);
+int tap_release(uint32_t hold_id);

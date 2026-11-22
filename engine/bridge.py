@@ -220,6 +220,18 @@ class Bridge:
             out.update(self._get(f"/query?target={target_hex}&props={chunk}"))
         return out
 
+    def hold_target(self, target_hex: str, codes: list[str]) -> tuple[int | None, dict]:
+        """Like query_target, but the channels stay open (watched) until release(hold id)."""
+        chunk = ",".join(urllib.parse.quote(c, safe="#") for c in codes[:BATCH])
+        r = self._get(f"/query?target={target_hex}&props={chunk}&hold=1")
+        return r.get("hold"), r.get("values") or {}
+
+    def release(self, hold_id: int) -> bool:
+        try:
+            return bool(self._get(f"/release?id={hold_id}").get("released"))
+        except urllib.error.HTTPError:
+            return False
+
     def game(self) -> dict:
         """Current date, the human manager and team, save name and career start."""
         raw = self.query_target(GAME_TARGET, list(GAME_FIELDS.values()))

@@ -468,6 +468,7 @@ static struct {
     char *values[QUERY_MAX];
     int n, opened, received;
     int frames, quiet;      // frames since open / since last response
+    int hold;               // keep the channels open after the query (released by tap_release)
 } g_q = {.lock = PTHREAD_MUTEX_INITIALIZER, .m = PTHREAD_MUTEX_INITIALIZER, .done_cv = PTHREAD_COND_INITIALIZER};
 
 static u64 query_key(int i) { return OUR_KEY_PREFIX | ((u64)(g_q.id & 0x7fff) << 32) | (u64)i; }
@@ -513,6 +514,37 @@ static void query_close(void) {
     run_actions(acts, na);
 }
 
+// Held queries: channels kept open (watched) until released, as the UI keeps the
+// dialogs it shows open. FM only acts on some events (e.g. a conversation choice)
+// while someone watches the dialog.
+#define HOLDS 16
+static struct { uint32_t id; int n; int release; } g_holds[HOLDS];
+
+static void hold_release_step(void) {
+    static uint8_t acts[24 * 2 * 256];
+    for (int h = 0; h < HOLDS; h++) {
+        if (!g_holds[h].id || !g_holds[h].release) continue;
+        int na = 0;
+        for (int i = 0; i < g_holds[h].n && i < 256; i++) {
+            u64 key = OUR_KEY_PREFIX | ((u64)(g_holds[h].id & 0x7fff) << 32) | (u64)i;
+            put_action(acts, na++, key, 0, g_mode_close);
+            put_action(acts, na++, key, 0, g_mode_remove_node);
+        }
+        run_actions(acts, na);
+        g_holds[h].id = 0;
+        g_holds[h].release = 0;
+    }
+}
+
+int tap_release(uint32_t id) {
+    pthread_mutex_lock(&g_q.m);
+    int found = 0;
+    for (int h = 0; h < HOLDS; h++)
+        if (g_holds[h].id == id) { g_holds[h].release = 1; found = 1; }
+    pthread_mutex_unlock(&g_q.m);
+    return found;
+}
+
 // Main thread, once per frame.
 static void query_step(void) {
     pthread_mutex_lock(&g_q.m);
@@ -527,11 +559,16 @@ static void query_step(void) {
         // Large batches can take a while before the first reply arrives.
         int idle = g_q.received ? g_q.quiet > 30 : g_q.frames > 240;
         if (g_q.received >= g_q.n || idle || g_q.frames > 900) {
-            query_close();
+            int kept = 0;
+            if (g_q.hold)
+                for (int h = 0; h < HOLDS && !kept; h++)
+                    if (!g_holds[h].id) { g_holds[h].id = g_q.id; g_holds[h].n = g_q.n; g_holds[h].release = 0; kept = 1; }
+            if (!kept) query_close();
             g_q.state = 3;
             pthread_cond_broadcast(&g_q.done_cv);
         }
     }
+    hold_release_step();
     pthread_mutex_unlock(&g_q.m);
 }
 
@@ -625,8 +662,21 @@ char *tap_query(uint32_t record, const uint32_t *props, int n) {
     return tap_query_target(target, sizeof target, props, n);
 }
 
+static char *query_target_impl(const uint8_t *target, int target_len, const uint32_t *props, int n, int hold,
+                               uint32_t *hold_id);
+
 char *tap_query_target(const uint8_t *target, int target_len, const uint32_t *props, int n) {
+    return query_target_impl(target, target_len, props, n, 0, NULL);
+}
+
+char *tap_hold_target(const uint8_t *target, int target_len, const uint32_t *props, int n, uint32_t *hold_id) {
+    return query_target_impl(target, target_len, props, n, 1, hold_id);
+}
+
+static char *query_target_impl(const uint8_t *target, int target_len, const uint32_t *props, int n, int hold,
+                               uint32_t *hold_id) {
     if (!tap_ready() || n <= 0 || target_len < 1 || target_len > (int)sizeof g_q.target) return NULL;
+    if (hold && n > 256) n = 256;
     if (n > QUERY_MAX) n = QUERY_MAX;
     pthread_mutex_lock(&g_q.lock);
     pthread_mutex_lock(&g_q.m);
@@ -637,6 +687,8 @@ char *tap_query_target(const uint8_t *target, int target_len, const uint32_t *pr
     memset(g_q.values, 0, sizeof(char *) * (size_t)n);
     g_q.n = n;
     g_q.opened = g_q.received = 0;
+    g_q.hold = hold;
+    if (hold_id) *hold_id = g_q.id;
     g_q.state = 1;
     struct timespec deadline;
     clock_gettime(CLOCK_REALTIME, &deadline);
@@ -662,6 +714,7 @@ char *tap_query_target(const uint8_t *target, int target_len, const uint32_t *pr
     }
     json_raw(&j, "}");
     g_q.state = 0;  // an unfinished query's channels stay open; harmless, they only report changes
+    g_q.hold = 0;
     pthread_mutex_unlock(&g_q.m);
     pthread_mutex_unlock(&g_q.lock);
     if (!finished) log_line("query: timed out (game not ticking?)");
@@ -1674,6 +1727,8 @@ void tap_install(void) { log_line("tap: only supported on Apple Silicon"); }
 int tap_ready(void) { return 0; }
 char *tap_query(uint32_t record, const uint32_t *props, int n) { (void)record; (void)props; (void)n; return NULL; }
 char *tap_query_target(const uint8_t *t, int tl, const uint32_t *props, int n) { (void)t; (void)tl; (void)props; (void)n; return NULL; }
+char *tap_hold_target(const uint8_t *t, int tl, const uint32_t *props, int n, uint32_t *id) { (void)t; (void)tl; (void)props; (void)n; (void)id; return NULL; }
+int tap_release(uint32_t id) { (void)id; return 0; }
 int tap_seen(uint32_t *out, int cap) { (void)out; (void)cap; return 0; }
 uint32_t tap_focus(uint8_t kind) { (void)kind; return 0; }
 char *tap_events_json(uint64_t since) { (void)since; return strdup("[]"); }
