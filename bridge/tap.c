@@ -1179,8 +1179,9 @@ static struct {
     int pending, finished, result;
     uint32_t record;
     char kind[16];
-    int op;  // 0 open, 1 close (dry run: log only), 2 close
-} g_ige = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, 0, {0}, 0};
+    int op;  // 0 open, 1 close (dry run: log only), 2 close, 3 read tab index, 4 set tab index
+    int index;
+} g_ige = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, 0, {0}, 0, 0};
 
 static const MethodInfo *method_with_params(Il2CppClass *k, const char *name, int argc);
 static size_t field_offset(Il2CppClass *k, const char *name);
@@ -1314,6 +1315,44 @@ static int ige_open_main(uint32_t record, const char *kind) {
     return exc ? -5 : 1;
 }
 
+// The editor's selected tab: IGEModule.m_index, a ValueWithChangeNotify<int>. Reading
+// logs the struct's layout; setting goes through its own set_Value on a boxed copy
+// (so the change notification reaches the UI) and copies the result back.
+static int ige_tab_main(int set, int value) {
+    Il2CppClass *module_k = il2cpp_find_class("FM.UI.dll", "FM.UI", "IGEModule");
+    Il2CppObject *module = first_instance(module_k);
+    FieldInfo *f = module_k ? il2cpp_class_get_field_from_name(module_k, "m_index") : NULL;
+    if (!module || !f) { log_line("ige: tab: no module / m_index"); return -2; }
+    Il2CppClass *vk = il2cpp_class_from_type(il2cpp_field_get_type(f));
+    size_t off = il2cpp_field_get_offset(f);
+    int size = il2cpp_class_value_size(vk, NULL);
+    void *it = NULL;
+    FieldInfo *vf;
+    int value_off = -1;
+    while ((vf = il2cpp_class_get_fields(vk, &it))) {
+        if (il2cpp_field_get_flags(vf) & FIELD_ATTRIBUTE_STATIC) continue;
+        char tn[128];
+        il2cpp_type_name(il2cpp_field_get_type(vf), tn, sizeof tn);
+        log_line("ige: tab struct field %s : %s @%zu", il2cpp_field_get_name(vf), tn, il2cpp_field_get_offset(vf));
+        if (value_off < 0 && !strcmp(tn, "System.Int32")) value_off = (int)il2cpp_field_get_offset(vf) - 0x10;
+    }
+    int32_t cur = 0;
+    if (value_off >= 0) safe_read((uint8_t *)module + off + value_off, &cur, 4);
+    log_line("ige: tab index = %d (struct size %d)", cur, size);
+    if (!set) return cur;
+    const MethodInfo *setter = method_with_params(vk, "set_Value", 1);
+    if (!setter || size <= 0 || size > 256) { log_line("ige: tab: no set_Value"); return -3; }
+    Il2CppObject *boxed = il2cpp_value_box(vk, (uint8_t *)module + off);
+    Il2CppException *exc = NULL;
+    int32_t v = value;
+    void *args[1] = {&v};
+    il2cpp_runtime_invoke(setter, boxed, args, &exc);
+    if (exc) { log_line("ige: tab: set_Value threw"); return -5; }
+    memcpy((uint8_t *)module + off, (uint8_t *)boxed + 0x10, (size_t)size);
+    log_line("ige: tab index set to %d", value);
+    return value;
+}
+
 static void ige_step(void) {
     pthread_mutex_lock(&g_ige.m);
     if (g_ige.pending) {
@@ -1323,7 +1362,8 @@ static void ige_step(void) {
             log_line("ige: fault while opening the editor");
         } else {
             t_guard = &here;
-            g_ige.result = g_ige.op ? ige_close_main(g_ige.op == 1) : ige_open_main(g_ige.record, g_ige.kind);
+            g_ige.result = g_ige.op >= 3 ? ige_tab_main(g_ige.op == 4, g_ige.index)
+                         : g_ige.op ? ige_close_main(g_ige.op == 1) : ige_open_main(g_ige.record, g_ige.kind);
             t_guard = NULL;
         }
         g_ige.pending = 0;
@@ -1356,6 +1396,7 @@ static int ige_run(uint32_t record, const char *kind, int op) {
 
 int tap_editor_open(uint32_t record, const char *kind) { return ige_run(record, kind, 0); }
 int tap_editor_close(int dry) { return ige_run(0, "", dry ? 1 : 2); }
+int tap_editor_tab(int set, int index) { g_ige.index = index; return ige_run(0, "", set ? 4 : 3); }
 
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     g_orig_tick(a, b, c, d, e, f, g, h);
@@ -1506,6 +1547,7 @@ int tap_send_event(uint32_t id, const uint8_t *t, int tl, const uint8_t *d, int 
 char *tap_editor_json(void) { return strdup("[]"); }
 int tap_editor_open(uint32_t record, const char *kind) { (void)record; (void)kind; return 0; }
 int tap_editor_close(int dry) { (void)dry; return 0; }
+int tap_editor_tab(int set, int index) { (void)set; (void)index; return 0; }
 int tap_editor_set(uint64_t key, const uint8_t *d, int dl) { (void)key; (void)d; (void)dl; return 0; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }

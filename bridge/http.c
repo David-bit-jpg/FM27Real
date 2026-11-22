@@ -195,6 +195,15 @@ static void handle(int fd) {
         respond(fd, r == 1 ? 200 : 503, body);
         return;
     }
+    if (!strcmp(target, "/editor/tab")) {
+        char ix[16] = "";
+        int set = query && param(query, "index", ix, sizeof ix);
+        int r = tap_editor_tab(set, set ? (int)strtol(ix, NULL, 10) : 0);
+        char body[64];
+        snprintf(body, sizeof body, "{\"index\":%d}", r);
+        respond(fd, r >= 0 ? 200 : 503, body);
+        return;
+    }
     if (!strcmp(target, "/editor/close")) {
         char dry[8] = "";
         if (query) param(query, "dry", dry, sizeof dry);

@@ -61,3 +61,7 @@ int tap_editor_open(uint32_t record, const char *kind);
 // Closes the In-Game Editor panel (PanelManager.CloseAll on the editor's layer).
 // With dry, only logs the layers involved. Returns 1 on success.
 int tap_editor_close(int dry);
+
+// The In-Game Editor's selected tab (IGEModule.m_index): read (set 0) or set it.
+// Returns the index, or < 0 on failure.
+int tap_editor_tab(int set, int index);
