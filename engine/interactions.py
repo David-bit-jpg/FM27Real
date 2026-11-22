@@ -45,9 +45,13 @@ KIND_ZH = {"praise_form": "表扬近期状态", "praise_last_match": "表扬上�
            "ask_dressing_room_advice": "征求更衣室建议", "praise_loan": "表扬租借表现", "criticise_loan": "批评租借表现"}
 KIND_NAMES = ["none", *KINDS]
 TONES = ["warm", "firm"]
-PREFER = {  # option group heads FM uses, in order of preference by tone
+PREFER = {  # option group heads FM uses, in order of preference by tone (opening line)
     "warm": ("积极", "表扬上次表现", "训练水平", "鼓励", "说服", "祝贺", "寻求建议", "承诺", "妥协", "退让"),
     "firm": ("坚持", "批评", "否定", "威胁", "训练水平", "说服"),
+}
+PUSHBACK = {  # once the player pushes back: a warm manager steps back, a firm one holds his ground
+    "warm": ("建议", "退让", "妥协", "鼓励", "积极", "承诺", "说服", "坚持"),
+    "firm": ("坚持", "否定", "批评", "威胁", "说服", "建议"),
 }
 NULL = -8388609              # FM's null record (0xff7fffff)
 MAX_STEPS = 4                # choices per conversation
@@ -150,11 +154,12 @@ class FMTalks:
         return [s for s in says if s], body, groups
 
     @staticmethod
-    def _pick(groups: list[dict], tone: str, words: str) -> dict | None:
+    def _pick(groups: list[dict], tone: str, words: str, step: int = 0) -> dict | None:
         usable = [g for g in groups if g["head"] != "结束聊天" and (g["children"] or isinstance(g["id"], int))]
         if not usable:
             return None
-        order = PREFER.get(tone, PREFER["warm"])
+        table = PREFER if step == 0 else PUSHBACK
+        order = table.get(tone, table["warm"])
         usable.sort(key=lambda g: order.index(g["head"]) if g["head"] in order else len(order))
         g = usable[0]
         if not g["children"]:
@@ -179,8 +184,8 @@ class FMTalks:
                 holds.append(h2)
             says, body, groups = self._read(speak)
             opening = says
-            for _ in range(MAX_STEPS):
-                option = self._pick(groups, plan["tone"], plan.get("words") or "")
+            for step in range(MAX_STEPS):
+                option = self._pick(groups, plan["tone"], plan.get("words") or "", step)
                 if not option:
                     break
                 if not b.send_event(option["event"] if isinstance(option["event"], int) else 34, speak,
