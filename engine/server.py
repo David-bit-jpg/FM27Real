@@ -218,7 +218,8 @@ def make_handler(engine: Engine):
                 if method == "GET" and path == "/api/social":
                     career = engine.careers.current()
                     return self._json(200, {"posts": engine.social.posts(career), "fan_mood": engine.social.fan_mood(career),
-                                            "pending": len(engine.social.pending(career)),
+                                            "pending": 0 if career.store.get_meta("social_generated_at") == (career.clock or career.date)
+                                            else len(engine.social.pending(career)),
                                             "notifications": engine.social.notifications(career),
                                             "me": {"name": career.manager_name, "uid": career.manager_uid},
                                             "people": [{"id": p["id"], "name": p["name"]} for p in engine.roster.players(career)]})

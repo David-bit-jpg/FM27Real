@@ -112,6 +112,17 @@ def clock(career: Career) -> datetime:
     return datetime.strptime(career.date, "%Y-%m-%d")
 
 
+def _grown(likes, since: str | None, now: datetime) -> int:
+    """Likes as they stand now: a post collects them over about two game days (no model call)."""
+    if not isinstance(likes, int) or likes <= 0:
+        return likes or 0
+    try:
+        hours = max(0.0, (now - datetime.fromisoformat(since)).total_seconds() / 3600) if since else 48.0
+    except ValueError:
+        hours = 48.0
+    return int(likes * min(1.0, 0.25 + 0.75 * hours / 48))
+
+
 def _visible(item: dict, now: datetime) -> bool:
     after = item.get("visible_after")
     return not after or datetime.fromisoformat(after) <= now
@@ -215,7 +226,9 @@ class SocialFeed:
         for i, p in enumerate(self._all(career)):
             if not _visible(p, now):
                 continue
-            out.append(p | {"comments": [c for c in p.get("comments") or [] if _visible(c, now)], "_i": i})
+            out.append(p | {"likes": _grown(p.get("likes"), p.get("posted"), now),
+                            "comments": [c | {"likes": _grown(c.get("likes"), c.get("visible_after") or p.get("posted"), now)}
+                                         for c in p.get("comments") or [] if _visible(c, now)], "_i": i})
         # newest game day first; within a day the manager's own posts on top, then the most recently written
         out.sort(key=lambda p: (p["date"] or "", p["author"].get("kind") == "manager", p["_i"]), reverse=True)
         for p in out:
@@ -452,6 +465,11 @@ class SocialFeed:
         if not self.lock.acquire(blocking=False):
             return 0
         try:
+            # New posts only once per step of FM's clock: refreshing in place never writes (or spends) anything.
+            stamp = career.clock or career.date
+            if career.store.get_meta("social_generated_at") == stamp:
+                return 0
+            career.store.set_meta("social_generated_at", stamp)
             players = self._players(career)
             added = 0
             now = clock(career).isoformat()
