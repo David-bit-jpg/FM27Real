@@ -41,7 +41,7 @@ static size_t g_record_index_off, g_record_type_off;
 static size_t g_receiver_list_offset;      // GameReceiver.m_resusableTypedList
 static size_t g_receiver_callback_offset;  // GameReceiver.m_onChannelDataChange
 static size_t g_list_items_offset, g_list_size_offset;
-static const MethodInfo *g_open_method, *g_actions_method;
+static const MethodInfo *g_open_method, *g_actions_method, *g_send_method;
 static int32_t g_mode_add_node = -1, g_mode_remove_node = -1, g_mode_close = -1, g_mode_set_property = -1;
 static int g_action_size;  // sizeof(ChannelAction)
 static u64 g_plugin;       // the IGamePlugin native wrapper instance
@@ -910,10 +910,62 @@ static void hook_send(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     g_orig_send(a, b, c, d, e, f, g, h);
 }
 
+// --- our own events (world engine -> FM), sent on the main thread -------------------
+// Exactly what the interface does when the player clicks: IGamePlugin.SendEvent with
+// the same id, target and data. One at a time; the caller waits for the result.
+static struct {
+    pthread_mutex_t lock, m;
+    pthread_cond_t done;
+    int pending, finished;
+    uint32_t id;
+    int tlen, dlen;
+    uint8_t target[96], data[1024];
+} g_out = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER};
+
+static void send_step(void) {
+    pthread_mutex_lock(&g_out.m);
+    if (g_out.pending && g_orig_send && g_send_method && g_plugin) {
+        u64 x[8] = {g_plugin, g_out.id, 0, 0, 0, 0, (u64)g_send_method, 0};
+        uint8_t span[2][16] = {{0}};
+        u64 tp = (u64)g_out.target, dp = (u64)g_out.data;
+        int32_t tl = g_out.tlen, dl = g_out.dlen;
+        memcpy(span[0] + g_span.ptr_off, &tp, 8); memcpy(span[0] + g_span.len_off, &tl, 4);
+        memcpy(span[1] + g_span.ptr_off, &dp, 8); memcpy(span[1] + g_span.len_off, &dl, 4);
+        memcpy(&x[2], span[0], 16);
+        memcpy(&x[4], span[1], 16);
+        g_orig_send(x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
+        if (g_tap) { tap_printf("S(ours) id=%u tlen=%d dlen=%d\n", g_out.id, tl, dl); fflush(g_tap); }
+        g_out.pending = 0;
+        g_out.finished = 1;
+        pthread_cond_broadcast(&g_out.done);
+    }
+    pthread_mutex_unlock(&g_out.m);
+}
+
+int tap_send_event(uint32_t id, const uint8_t *target, int tl, const uint8_t *data, int dl) {
+    if (!tap_ready() || !g_orig_send || !g_send_method || tl <= 0 || tl > 96 || dl < 0 || dl > 1024) return 0;
+    pthread_mutex_lock(&g_out.lock);
+    pthread_mutex_lock(&g_out.m);
+    g_out.id = id;
+    g_out.tlen = tl; memcpy(g_out.target, target, (size_t)tl);
+    g_out.dlen = dl; memcpy(g_out.data, data, (size_t)dl);
+    g_out.pending = 1; g_out.finished = 0;
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += 5;
+    while (!g_out.finished && pthread_cond_timedwait(&g_out.done, &g_out.m, &until) == 0) {}
+    int ok = g_out.finished;
+    g_out.pending = 0;  // timed out: never send late
+    pthread_mutex_unlock(&g_out.m);
+    pthread_mutex_unlock(&g_out.lock);
+    return ok;
+}
+
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     g_orig_tick(a, b, c, d, e, f, g, h);
     if (!g_plugin) g_plugin = a;
     query_step();
+    send_step();
 }
 
 // --- installation --------------------------------------------------------------
@@ -1011,6 +1063,7 @@ void tap_install(void) {
     g_typed_value_get = method_returning(typed_value, "Get", "System.Object");
     g_open_method = open;
     g_actions_method = actions;
+    g_send_method = send;
     g_receiver_list_offset = field_offset(receiver, "m_resusableTypedList");
     g_receiver_callback_offset = field_offset(receiver, "m_onChannelDataChange");
     g_record_index_off = field_offset(g_record_ref_class, "m_index");
@@ -1049,6 +1102,7 @@ int tap_seen(uint32_t *out, int cap) { (void)out; (void)cap; return 0; }
 uint32_t tap_focus(uint8_t kind) { (void)kind; return 0; }
 char *tap_events_json(uint64_t since) { (void)since; return strdup("[]"); }
 char *tap_last_target(uint32_t type) { (void)type; return NULL; }
+int tap_send_event(uint32_t id, const uint8_t *t, int tl, const uint8_t *d, int dl) { (void)id; (void)t; (void)tl; (void)d; (void)dl; return 0; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }
 uint32_t fourcc_parse(const char *s) { return (uint32_t)strtoul(s + 1, NULL, 16); }

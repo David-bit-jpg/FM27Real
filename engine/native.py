@@ -118,11 +118,12 @@ class NativeSync:
             topic = _clean(head.get("lWh9"))
             tone = head.get("izOE") if isinstance(head.get("izOE"), int) else None
             if isinstance(head.get("p3fs"), int):
-                options[head["p3fs"]] = {"text": topic, "topic": None, "tone": tone}
+                options[head["p3fs"]] = {"text": topic, "topic": None, "tone": tone, "event": head.get("neve")}
             for child in props.get("T3E4") or []:
                 c = _props(child)
                 if isinstance(c.get("p3fs"), int):
-                    options[c["p3fs"]] = {"text": _clean(c.get("lWh9")), "topic": topic, "tone": tone}
+                    options[c["p3fs"]] = {"text": _clean(c.get("lWh9")), "topic": topic, "tone": tone,
+                                          "event": c.get("neve")}
         self.options.update(options)
         for item in raw_extra:
             p = _props(item)

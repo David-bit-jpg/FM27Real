@@ -38,3 +38,8 @@ uint32_t tap_guid(void);
 // 4-character property codes: "eman" <-> 0x6e616d65 (little-endian).
 void fourcc_string(uint32_t v, char out[16]);
 uint32_t fourcc_parse(const char *s);
+
+// Sends an event to the game's engine exactly as the interface does when the
+// player clicks (IGamePlugin.SendEvent), on the main thread. Blocks up to 5 s.
+// Returns 1 when sent. Never sends late: on timeout nothing is sent.
+int tap_send_event(uint32_t id, const uint8_t *target, int target_len, const uint8_t *data, int data_len);

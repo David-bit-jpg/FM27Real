@@ -164,6 +164,13 @@ class Bridge:
         """Events the game's interface sent to its engine after sequence number `since`."""
         return self._get(f"/events?since={since}")
 
+    def send_event(self, event_id: int, target_hex: str, data_hex: str) -> bool:
+        """Sends an event to FM's engine exactly as its interface does (on the game's main thread)."""
+        try:
+            return bool(self._get(f"/send?id={event_id}&target={target_hex}&data={data_hex}", timeout=10).get("sent"))
+        except urllib.error.HTTPError:
+            return False
+
     def last_target(self, record_type: int) -> str | None:
         """The most recent target the interface opened for a record type (" 011" value)."""
         return self._get(f"/target?type={record_type}").get("target")

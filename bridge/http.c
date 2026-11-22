@@ -11,6 +11,7 @@
 //   GET /query?id=010baef4&props=eman,dinu
 //   GET /query?id=010baef4&type=PersonReference     every property of that type
 //   GET /query?target=<hex>&props=...               any serialized target (from a "target" value)
+//   GET /send?id=N&target=<hex>&data=<hex>          send an event to the engine as the interface does
 //
 // Property codes are 4 characters ("eman"; URL-encode spaces as %20) or
 // "#" + 8 hex digits.
@@ -152,6 +153,28 @@ static void handle(int fd) {
         snprintf(body, sizeof body, hexs ? "{\"target\":\"%s\"}" : "{\"target\":null}", hexs ? hexs : "");
         free(hexs);
         respond(fd, 200, body);
+        return;
+    }
+    if (!strcmp(target, "/send")) {
+        char id[16] = "", th[200] = "", dh[2100] = "";
+        if (!query || !param(query, "id", id, sizeof id) || !param(query, "target", th, sizeof th)) {
+            respond(fd, 400, "{\"error\":\"id and target required\"}"); return;
+        }
+        param(query, "data", dh, sizeof dh);
+        uint8_t t[96], d[1024];
+        int tl = 0, dl = 0;
+        for (const char *p = th; p[0] && p[1] && tl < (int)sizeof t; p += 2) {
+            int hi = hexval(p[0]), lo = hexval(p[1]);
+            if (hi < 0 || lo < 0) break;
+            t[tl++] = (uint8_t)(hi * 16 + lo);
+        }
+        for (const char *p = dh; p[0] && p[1] && dl < (int)sizeof d; p += 2) {
+            int hi = hexval(p[0]), lo = hexval(p[1]);
+            if (hi < 0 || lo < 0) break;
+            d[dl++] = (uint8_t)(hi * 16 + lo);
+        }
+        int ok = tap_send_event((uint32_t)strtoul(id, NULL, 10), t, tl, d, dl);
+        respond(fd, ok ? 200 : 503, ok ? "{\"sent\":true}" : "{\"sent\":false}");
         return;
     }
     if (!strcmp(target, "/focus")) {

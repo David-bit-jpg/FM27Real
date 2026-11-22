@@ -89,3 +89,29 @@ def target_pairs(hex_target: str) -> dict:
         return out
     except (ValueError, IndexError, struct.error):
         return {}
+
+
+# --- encoding (only what the interface sends when an option is clicked) ---------------
+def _code(c: str) -> bytes:
+    b = c.encode("latin1")
+    assert len(b) == 4
+    return b
+
+
+def _int(v: int) -> bytes:
+    if -128 <= v < 128:
+        return b"\x01\x11" + struct.pack("<b", v)
+    if -32768 <= v < 32768:
+        return b"\x01\x12" + struct.pack("<h", v)
+    return b"\x01\x02" + struct.pack("<i", v)
+
+
+def speak_choice(person: str, guid: int, option_id: int) -> str:
+    """Data of a SpeakTo choice event, byte for byte as FM's interface builds it:
+    {h1J: person, Vpcz: -1, p3fs: option, pQuB: 0, vQuB: {}, tdca: {}}."""
+    ref = b"\x01\x22\x03" + b"".join(_code(c) + struct.pack("<i", v) for c, v in (
+        (" 011", 0x1c), ("diuG", guid), ("ferd", int(person, 16) - (1 << 32) if int(person, 16) >= 1 << 31 else int(person, 16))))
+    empty = b"\x01\x0a" + struct.pack("<I", 0)
+    body = (_code("h1J ") + ref + _code("Vpcz") + _int(-1) + _code("p3fs") + _int(option_id)
+            + _code("pQuB") + b"\x01\x02" + struct.pack("<i", 0) + _code("vQuB") + empty + _code("tdca") + empty)
+    return (b"\x01\x0a" + struct.pack("<I", 6) + body).hex()
