@@ -52,3 +52,8 @@ char *tap_editor_json(void);
 // the player edits the field (main thread, blocks up to 5 s). Returns 1 when
 // written, -1 when the key is not a live editor value channel, 0 otherwise.
 int tap_editor_set(uint64_t key, const uint8_t *data, int data_len);
+
+// Opens the In-Game Editor panel on a person (kind "person") or club ("club"), as
+// the pencil button does (IGEModule.OpenIGEPanel). Main thread, fault-guarded.
+// Returns 1 when called, <= 0 on failure.
+int tap_editor_open(uint32_t record, const char *kind);

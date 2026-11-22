@@ -1166,12 +1166,133 @@ int tap_send_event(uint32_t id, const uint8_t *target, int tl, const uint8_t *da
     return ok;
 }
 
+// --- opening the In-Game Editor the way the pencil button does --------------------
+// IGEModule.OpenIGEPanel(IGEPanelIndex, IDataReference object, EditorReference editor),
+// called on the main thread with the same objects the UI builds: a PersonReference
+// (or ClubReference) for the record and an EditorReference (record type 42, crBD =
+// record, session, dise 0). The panel then opens its own channels as usual.
+#define CODE_CRBD 0x44427263u
+#define CODE_DISE 0x65736964u
+static struct {
+    pthread_mutex_t lock, m;
+    pthread_cond_t done;
+    int pending, finished, result;
+    uint32_t record;
+    char kind[16];
+} g_ige = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, 0, {0}};
+
+static const MethodInfo *method_with_params(Il2CppClass *k, const char *name, int argc) {
+    void *it = NULL;
+    const MethodInfo *m;
+    while (k && (m = il2cpp_class_get_methods(k, &it)))
+        if (!strcmp(il2cpp_method_get_name(m), name) && (int)il2cpp_method_get_param_count(m) == argc) return m;
+    return NULL;
+}
+
+// new T(List<InteropReference.Pair>{pairs}) for an InteropReference subclass T.
+static Il2CppObject *make_reference(Il2CppClass *k, const uint32_t *codes, const int32_t *values, int n) {
+    const MethodInfo *ctor = method_with_params(k, ".ctor", 1);
+    if (!ctor) return NULL;
+    Il2CppClass *list_k = il2cpp_class_from_type(il2cpp_method_get_param(ctor, 0));
+    const MethodInfo *list_ctor = method_with_params(list_k, ".ctor", 0), *add = method_with_params(list_k, "Add", 1);
+    if (!list_k || !list_ctor || !add) return NULL;
+    Il2CppException *exc = NULL;
+    Il2CppObject *list = il2cpp_object_new(list_k);
+    il2cpp_runtime_invoke(list_ctor, list, NULL, &exc);
+    for (int i = 0; i < n && !exc; i++) {
+        int32_t pair[2];
+        memcpy(&pair[0], &codes[i], 4);
+        pair[1] = values[i];
+        void *args[1] = {pair};
+        il2cpp_runtime_invoke(add, list, args, &exc);
+    }
+    if (exc) return NULL;
+    Il2CppObject *obj = il2cpp_object_new(k);
+    void *args[1] = {list};
+    il2cpp_runtime_invoke(ctor, obj, args, &exc);
+    return exc ? NULL : obj;
+}
+
+static int ige_open_main(uint32_t record, const char *kind) {
+    Il2CppClass *module_k = il2cpp_find_class("FM.UI.dll", "FM.UI", "IGEModule");
+    Il2CppClass *editor_k = il2cpp_find_class("FM.UI.dll", "FM.UI", "EditorReference");
+    int club = !strcmp(kind, "club");
+    Il2CppClass *object_k = il2cpp_find_class("FM.UI.dll", "FM.UI", club ? "ClubReference" : "PersonReference");
+    Il2CppClass *resources_k = il2cpp_find_class("UnityEngine.CoreModule.dll", "UnityEngine", "Resources");
+    const MethodInfo *open = method_with_params(module_k, "OpenIGEPanel", 3);
+    const MethodInfo *find_all = method_with_params(resources_k, "FindObjectsOfTypeAll", 1);
+    if (!module_k || !editor_k || !object_k || !open || !find_all) { log_line("ige: classes/methods missing"); return -2; }
+    Il2CppException *exc = NULL;
+    void *fargs[1] = {il2cpp_type_get_object(il2cpp_class_get_type(module_k))};
+    Il2CppObject *arr = il2cpp_runtime_invoke(find_all, NULL, fargs, &exc);
+    uint64_t count = 0;
+    Il2CppObject *module = NULL;
+    if (!arr || exc || !safe_read((uint8_t *)arr + 0x18, &count, 8) || !count ||
+        !safe_read((uint8_t *)arr + 0x20, &module, sizeof module) || !module) { log_line("ige: no IGEModule instance"); return -3; }
+    uint32_t ocodes[3] = {CODE_011, CODE_GUID, CODE_FERD};
+    int32_t ovals[3] = {club ? 0x1c : 0x1c, (int32_t)g_guid, (int32_t)record};
+    uint32_t ecodes[4] = {CODE_011, CODE_CRBD, CODE_GUID, CODE_DISE};
+    int32_t evals[4] = {42, (int32_t)record, (int32_t)g_guid, 0};
+    Il2CppObject *object = make_reference(object_k, ocodes, ovals, 3);
+    Il2CppObject *editor = make_reference(editor_k, ecodes, evals, 4);
+    if (!object || !editor) { log_line("ige: could not build references"); return -4; }
+    Il2CppClass *index_k = il2cpp_class_from_type(il2cpp_method_get_param(open, 0));
+    int32_t index = 0;
+    FieldInfo *f = index_k ? il2cpp_class_get_field_from_name(index_k, club ? "Club" : "Player") : NULL;
+    if (f) il2cpp_field_static_get_value(f, &index);
+    uint8_t idx = (uint8_t)index;
+    void *args[3] = {&idx, object, editor};
+    il2cpp_runtime_invoke(open, module, args, &exc);
+    log_line("ige: OpenIGEPanel(%s %08x, index %d)%s", kind, record, idx, exc ? " threw" : "");
+    return exc ? -5 : 1;
+}
+
+static void ige_step(void) {
+    pthread_mutex_lock(&g_ige.m);
+    if (g_ige.pending) {
+        sigjmp_buf here;
+        if (sigsetjmp(here, 1)) {
+            g_ige.result = -9;  // a fault inside: nothing more is attempted
+            log_line("ige: fault while opening the editor");
+        } else {
+            t_guard = &here;
+            g_ige.result = ige_open_main(g_ige.record, g_ige.kind);
+            t_guard = NULL;
+        }
+        g_ige.pending = 0;
+        g_ige.finished = 1;
+        pthread_cond_broadcast(&g_ige.done);
+    }
+    pthread_mutex_unlock(&g_ige.m);
+}
+
+int tap_editor_open(uint32_t record, const char *kind) {
+    if (!tap_ready()) return 0;
+    pthread_mutex_lock(&g_ige.lock);
+    pthread_mutex_lock(&g_ige.m);
+    g_ige.record = record;
+    strlcpy(g_ige.kind, kind, sizeof g_ige.kind);
+    g_ige.pending = 1;
+    g_ige.finished = 0;
+    g_ige.result = 0;
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += 5;
+    while (!g_ige.finished && pthread_cond_timedwait(&g_ige.done, &g_ige.m, &until) == 0) {}
+    int r = g_ige.finished ? g_ige.result : 0;
+    g_ige.pending = 0;
+    pthread_mutex_unlock(&g_ige.m);
+    pthread_mutex_unlock(&g_ige.lock);
+    return r;
+}
+
 static void hook_tick(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h) {
     g_orig_tick(a, b, c, d, e, f, g, h);
     if (!g_plugin) g_plugin = a;
     query_step();
     send_step();
     update_step();
+    ige_step();
 }
 
 // --- installation --------------------------------------------------------------
@@ -1312,6 +1433,7 @@ char *tap_events_json(uint64_t since) { (void)since; return strdup("[]"); }
 char *tap_last_target(uint32_t type) { (void)type; return NULL; }
 int tap_send_event(uint32_t id, const uint8_t *t, int tl, const uint8_t *d, int dl) { (void)id; (void)t; (void)tl; (void)d; (void)dl; return 0; }
 char *tap_editor_json(void) { return strdup("[]"); }
+int tap_editor_open(uint32_t record, const char *kind) { (void)record; (void)kind; return 0; }
 int tap_editor_set(uint64_t key, const uint8_t *d, int dl) { (void)key; (void)d; (void)dl; return 0; }
 uint32_t tap_guid(void) { return 0; }
 void fourcc_string(uint32_t v, char out[16]) { snprintf(out, 16, "#%08x", v); }

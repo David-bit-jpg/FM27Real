@@ -185,6 +185,16 @@ static void handle(int fd) {
         free(body);
         return;
     }
+    if (!strcmp(target, "/editor/open")) {
+        char rs[16] = "", kind[16] = "person";
+        if (!query || !param(query, "record", rs, sizeof rs)) { respond(fd, 400, "{\"error\":\"record required\"}"); return; }
+        param(query, "kind", kind, sizeof kind);
+        int r = tap_editor_open((uint32_t)strtoul(rs, NULL, 16), kind);
+        char body[64];
+        snprintf(body, sizeof body, "{\"result\":%d}", r);
+        respond(fd, r == 1 ? 200 : 503, body);
+        return;
+    }
     if (!strcmp(target, "/editor/set")) {
         char ks[24] = "", dh[2100] = "";
         if (!query || !param(query, "key", ks, sizeof ks) || !param(query, "data", dh, sizeof dh)) {

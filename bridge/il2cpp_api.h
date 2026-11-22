@@ -44,6 +44,8 @@ typedef void Il2CppDomain, Il2CppAssembly, Il2CppImage, Il2CppClass, Il2CppThrea
     X(Il2CppClass *, object_get_class, (Il2CppObject *))                                       \
     X(Il2CppObject *, value_box, (Il2CppClass *, void *))                                      \
     X(Il2CppObject *, object_new, (const Il2CppClass *))                                       \
+    X(const Il2CppType *, class_get_type, (Il2CppClass *))                                     \
+    X(Il2CppObject *, type_get_object, (const Il2CppType *))                                   \
     X(FieldInfo *, class_get_field_from_name, (const Il2CppClass *, const char *))             \
     X(void, field_static_get_value, (FieldInfo *, void *))                                     \
     X(uint16_t *, string_chars, (Il2CppString *))                                              \
