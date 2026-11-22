@@ -20,6 +20,7 @@ reason.
 """
 from __future__ import annotations
 
+import hashlib
 import random
 from datetime import date as Date
 
@@ -38,6 +39,18 @@ INJURY_WORDS = ("伤", "缺席", "injur")
 
 FUTURE_EVERY_DAYS = 5   # a journalist asks the manager without a club about his plans
 JOB_WORDS = ("面试", "职位", "空缺", "解雇", "下课", "帅位", "招聘", "主教练", "求职", "离任")
+
+
+def media_contact(career: Career) -> dict | None:
+    """A media outlet seen in FM's news, as a contact of its own (id "ee" + 6 hex: never an FM record)."""
+    outlets = [o for o in ((e["payload"] or {}).get("outlet") for e in career.store.events("news", limit=300)) if o]
+    if not outlets:
+        return None
+    outlet = random.choice(outlets[-40:])
+    ref = "ee" + hashlib.sha1(outlet.encode()).hexdigest()[:6]
+    j = {"id": ref, "name": f"{outlet}记者", "outlet": outlet, "uid": None, "media": True}
+    career.store.add_event("journalist", career.date, j, event_key=f"journalist:{ref}")
+    return {"person": ref, "name": j["name"], "role": "journalist", "outlet": outlet, "uid": None}
 
 
 def _age(career: Career, d: str | None) -> int:
@@ -256,8 +269,8 @@ class ContactEngine:
 
     def _journalist(self, career: Career, prefer_hostile: bool) -> dict | None:
         roster = [e["payload"] for e in career.store.events("journalist", limit=200) if (e["payload"] or {}).get("id")]
-        if not roster:
-            return None
+        if not roster:  # no journalist known by name yet: an outlet from the news gets in touch itself
+            return media_contact(career)
         if prefer_hostile:
             roster.sort(key=lambda j: career.store.relation(j["id"])["liking"])
             pick = roster[0]

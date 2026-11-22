@@ -30,7 +30,7 @@ from .stats import match_row
 
 FORM_FIELDS = ("ZaLo", "E2cn", "phIw")  # a player's last-five-matches form (different competitions)
 FIXTURE_FIELDS = ["etdf", "Tmhf", "Twaf", "shxf", "saxf", "srxf", "poNF", "kT1 ", "zKyn", "6dsa", "LmjO"]
-NEWS_FIELDS = ["ltit", "ydob", "AMqC", "spin", "dinu", "wZa ", "tdP3"]  # tdP3: the article a forwarded item points to
+NEWS_FIELDS = ["ltit", "ydob", "AMqC", "spin", "dinu", "wZa ", "tdP3", "SdeM"]  # SdeM: the media outlet  # tdP3: the article a forwarded item points to
 POST_KINDS = {1: "club", 2: "fan", 3: "media", 4: "pundit", 5: "competition"}
 GOOD_RATING = 8.0
 POOR_RATING = 6.0
@@ -145,6 +145,7 @@ class StoryEngine:
                 origin, weight = "manager_talk", max(weight, 1.8)       # another manager on him or his team
             payload = {"id": news_id, "title": title, "body": body[:1500], "from": _ref(v.get("spin")),
                        "origin": origin,
+                       "outlet": self.name(v["SdeM"]["ref"]) if isinstance(v.get("SdeM"), dict) and v["SdeM"].get("ref") else None,
                        "fm_posts": self.fm_posts(v.get("wZa ")),
                        "people": people, "names": {r: self.name(r) for r in people[:6]}, "weight": weight}
             if not store.add_event("news", date, payload, event_key=f"news:{news_id}"):

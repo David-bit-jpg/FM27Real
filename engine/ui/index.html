@@ -235,7 +235,7 @@ async function fmOpen(id, kind = "person") {
   catch (e) { banner(e.message, true); }
 }
 function fmLink(id, name, kind = "person") {
-  if (!id) return name || "";
+  if (!id || /^ee/i.test(id)) return name || "";  // "ee…": a media outlet's contact, not an FM record
   return el("span", { class: "link", title: t("openInFM"), onclick: ev => { ev.stopPropagation(); fmOpen(id, kind); } }, name || id);
 }
 // Names of known people inside a text become links (full names, and surnames that are unambiguous).
@@ -713,7 +713,7 @@ async function openPerson(id) {
   setHeader(person.name, true);
   const log = el("div", { class: "log" });
   const head = el("div", { class: "chat-head" }, avatar(person, true),
-    el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name" }, /^[0-9a-f]{8}$/i.test(id) ? fmLink(id, person.name) : person.name),
+    el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name" }, fmLink(/^[0-9a-f]{8}$/i.test(id) ? id : null, person.name)),
       el("div", { class: "sub" }, [person.position, person.team_name, person.age && `${person.age}`].filter(Boolean).join(" · ")),
       moodChip(lastMood(messages))));
   const input = el("input", { placeholder: t("placeholder"), autocomplete: "off" });

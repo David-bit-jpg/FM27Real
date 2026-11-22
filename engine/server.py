@@ -289,7 +289,7 @@ def make_handler(engine: Engine):
                 if method == "POST" and path == "/api/fm/open":  # FM's own page, as a clicked name link
                     body = self._body()
                     record = str(body.get("record") or "")
-                    if not re.fullmatch(r"[0-9a-fA-F]{8}", record):
+                    if not re.fullmatch(r"[0-9a-fA-F]{8}", record) or record.lower().startswith("ee"):
                         return self._json(400, {"error": "record required"})
                     kind = "club" if body.get("kind") == "club" else "person"
                     return self._json(200, {"opened": engine.bridge.open_page(record, kind)})

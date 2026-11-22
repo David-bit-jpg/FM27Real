@@ -10,6 +10,14 @@ from .bridge import GRAPHICS, Bridge
 from .career import Career
 
 
+def media(career: Career, person_id: str) -> dict:
+    """A media outlet's contact (see contacts.media_contact): not an FM record, nothing to read from the game."""
+    e = career.store.event_by_key(f"journalist:{person_id}")
+    p = (e or {}).get("payload") or {}
+    return {"id": person_id, "name": p.get("name") or "记者", "role": "journalist", "outlet": p.get("outlet") or "",
+            "uid": None, "has_face": False, "media": True}
+
+
 def build(bridge: Bridge, person_id: str) -> dict:
     snap = bridge.person(person_id)
     snap["social"] = bridge.person_social(person_id)
@@ -43,6 +51,8 @@ def build(bridge: Bridge, person_id: str) -> dict:
 
 
 def get(bridge: Bridge, career: Career, person_id: str, refresh: bool = False) -> dict:
+    if person_id.startswith("ee"):
+        return media(career, person_id)
     cached, date = career.store.get_snapshot(person_id)
     if cached and date == career.date and not refresh:
         return cached
