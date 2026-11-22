@@ -155,7 +155,10 @@ class PressRoom:
     def state(self, career: Career, model: Provider | None) -> dict:
         with self.lock:
             cur = self._sync()
-            if not cur or self.key in self.dismissed:
+            if cur and self.key in self.dismissed:  # answered with FM's own options; the manager may switch back
+                return {"active": False, "dismissed": True, "journalist": self.journalist(cur["person"]),
+                        "question": self.rewritten.get(self.key) or cur["question"]}
+            if not cur:
                 return {"active": False}
             key = self.key
             question = self.rewritten.get(key)
@@ -474,10 +477,18 @@ invent facts, records, streaks or quotes.
             bg = json.loads(raw)
         except ValueError:
             return
-        now = time.monotonic()
-        self.bg = bg | {"started": now, "last_question": now}
-        self.native.pinned_speak, self.native.pinned_session = bg["speak"], bg["session"]
-        self.native.speak_checked = 0.0
+        # Press conferences are no longer started from the phone: a conference left over from an
+        # earlier version is let go (its held targets released, nothing answered), so FM's own
+        # invitation can be attended normally.
+        for h in bg.get("holds") or []:
+            try:
+                self.bridge.release(h)
+            except Exception:
+                pass
+        career.store.set_meta("press_bg_live", "")
+        if (bg.get("invitation") or {}).get("news"):
+            career.store.update_event(f"press_bg:{bg['invitation']['news']}", {"news": bg["invitation"]["news"],
+                                                                              "status": "released"})
 
     def background_tick(self, career: Career) -> None:
         """Called often by the engine: ends a background press conference once FM has no more questions."""
@@ -546,8 +557,27 @@ invent facts, records, streaks or quotes.
             return {"background": True, "title": bg["invitation"]["title"], "answered": bg["answered"]}
         if self.finished:
             return {"background": False, "finished": self.finished}
-        try:
-            inv = self.invitation(career)
-        except BridgeUnavailable:
-            inv = None
-        return {"background": False, "invitation": {"title": inv["title"], "date": inv["date"]} if inv else None}
+        return {"background": False}
+
+    def leave_early(self, career: Career) -> dict:
+        """The manager leaves FM's press conference early: as FM does, the remaining questions get
+        neutral answers (FM's own options), then FM's screen shows the end of the conference."""
+        if self.bg:
+            return self.background_close(career, early=True)
+        answered = 0
+        for _ in range(MAX_AUTO_ANSWERS):
+            self.native.speak_checked = 0.0
+            self.native._refresh_options()
+            cur = self.native.current
+            if not cur:
+                break
+            option = next((pid for pid, o in cur["options"].items() if o.get("tone") == 2), next(iter(cur["options"])))
+            if not self._submit(cur, option):
+                return {"ok": False, "error": "FM 没有接受回答，请用原版界面离场", "answered": answered}
+            answered += 1
+            time.sleep(1.5)
+        with self.lock:
+            self.dismissed.clear()
+        career.store.add_event("press_conference", career.date, {"title": "新闻发布会", "answers": list(self.conference[1]),
+                                                                 "walked_out": True, "auto": answered})
+        return {"ok": True, "auto_answered": answered}

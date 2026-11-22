@@ -152,6 +152,9 @@
   .score .num { font-size: 18px; padding: 0 6px; }
   .card.life { border-left: 3px solid #59a6ff; } .card .lifetext { font-size: 13px; }
   .card.win { border-left: 3px solid var(--good); } .card.loss { border-left: 3px solid var(--bad); } .card.draw { border-left: 3px solid var(--warn); }
+  .confirm { margin: 10px 14px; padding: 12px; border: 1px solid var(--bad); border-radius: 10px; background: rgba(255,80,80,.08); }
+  .confirm .foot { display: flex; gap: 14px; margin-top: 10px; } .confirm button { background: none; border: 0; color: var(--text); text-decoration: underline; }
+  .confirm button.danger { color: var(--bad); font-weight: 600; }
   .link { color: #9fc0ff; cursor: pointer; text-decoration: underline; text-decoration-color: rgba(159,192,255,.45);
     text-underline-offset: 2px; } .link:hover { text-decoration-color: #9fc0ff; }
   .nm.link { color: inherit; }
@@ -192,7 +195,7 @@ const T = {
         language: "界面语言", model: "模型", provider: "提供方", apiKey: "API key", keySaved: "已保存", keyKeep: "留空则保留已保存的 key",
         keyNone: "这个选项不需要 key；粘贴别家的 key 会自动切换", pickProvider: "请在上面选这个 key 属于哪家", baseUrl: "接口地址", modelName: "模型名称", fetchModels: "获取模型列表",
         test: "测试连接", save: "保存", saved: "已保存", testing: "测试中…", testOk: "连接成功", detected: "已识别为",
-        openInFM: "在 FM 中打开", pressOngoing: "新闻发布会进行中", pressInvite: "点这里在手机上参加（FM 后台进行）", pressStarting: "正在走进发布厅…", pressFail: "没能开始发布会", pressOver: "已结束", pressAuto: "提前离场，剩下 N 个问题由 FM 按中立回答", pressLeave: "提前离场", pressLeaveAsk: "提前离场？剩下的问题会按中立回答，记者可能不满。", back: "返回", fmOpenFail: "FM 没能打开这个页面。", noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
+        openInFM: "在 FM 中打开", pressOngoing: "新闻发布会进行中", pressInvite: "点这里在手机上参加（FM 后台进行）", pressStarting: "正在走进发布厅…", pressFail: "没能开始发布会", pressOver: "已结束", pressAuto: "提前离场，剩下 N 个问题由 FM 按中立回答", pressLeave: "提前离场", pressLeaveAsk: "提前离场？剩下的问题会由 FM 按中立回答，记者可能不满。", pressLeaveYes: "确认离场", pressLeaving: "正在离场…", pressNativeOn: "这一题正在用 FM 原版选项回答", pressTypeAgain: "✍️ 改回打字回答", back: "返回", fmOpenFail: "FM 没能打开这个页面。", noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
   en: { phone: "Manager's phone", messages: "Messages", trainingGround: "🏟 Training ground", groups: "Group chats", newGroup: "+ New group", groupName: "Group name (optional)", create: "Create",
         pickMembers: "Pick members", groupTyping: "Someone is typing…", groupsUnavailable: "Group chats unavailable: restart the engine (scripts/restart-engine.sh)", refresh: "Refresh", me: "Me",
@@ -208,7 +211,7 @@ const T = {
         language: "Language", model: "Model", provider: "Provider", apiKey: "API key", keySaved: "Saved", keyKeep: "Leave empty to keep the saved key",
         keyNone: "No key needed (paste a key to switch)", pickProvider: "Choose which provider this key belongs to above", baseUrl: "API address", modelName: "Model", fetchModels: "List models",
         test: "Test connection", save: "Save", saved: "Saved", testing: "Testing…", testOk: "Connected", detected: "Recognised as",
-        openInFM: "Open in FM", pressOngoing: "Press conference in progress", pressInvite: "Tap to attend on your phone (FM runs it in the background)", pressStarting: "Walking into the press room…", pressFail: "Could not start the press conference", pressOver: "over", pressAuto: "You left early; FM answered the remaining N questions neutrally", pressLeave: "Leave early", pressLeaveAsk: "Leave early? Remaining questions get neutral answers; journalists may not like it.", back: "Back", fmOpenFail: "FM could not open that page.", noBridge: "No career loaded yet. Load a save and your team appears here.", noEngine: "Cannot reach the engine.", modelErr: "Model error: ",
+        openInFM: "Open in FM", pressOngoing: "Press conference in progress", pressInvite: "Tap to attend on your phone (FM runs it in the background)", pressStarting: "Walking into the press room…", pressFail: "Could not start the press conference", pressOver: "over", pressAuto: "You left early; FM answered the remaining N questions neutrally", pressLeave: "Leave early", pressLeaveAsk: "Leave early? FM answers the remaining questions neutrally; journalists may not like it.", pressLeaveYes: "Leave", pressLeaving: "Leaving…", pressNativeOn: "This question is being answered with FM's own options", pressTypeAgain: "✍️ Type my answer instead", back: "Back", fmOpenFail: "FM could not open that page.", noBridge: "No career loaded yet. Load a save and your team appears here.", noEngine: "Cannot reach the engine.", modelErr: "Model error: ",
         loading: "Loading…", keyPrivacy: "Your key stays on this computer and is only sent to the provider you choose." },
 };
 let lang = "zh", view = "home", current = null, providers = {}, settings = {};
@@ -336,12 +339,9 @@ async function showHome() {
   try { groups = await api("/api/groups"); } catch (e) {}
   let pressInfo = {};
   try { pressInfo = await api("/api/press"); } catch (e) {}
-  const pressCard = pressInfo.background || pressInfo.active ? el("div", { class: "person unread", onclick: () => openPress() },
+  const pressCard = pressInfo.active || pressInfo.dismissed ? el("div", { class: "person unread", onclick: () => openPress() },
       el("div", { class: "avatar av-txt" }, "🎙"), el("div", { class: "who" }, el("div", { class: "name" }, t("pressOngoing")),
-        el("div", { class: "sub" }, pressInfo.title || ""))) :
-    pressInfo.invitation ? el("div", { class: "person unread", onclick: () => startPress() },
-      el("div", { class: "avatar av-txt" }, "🎙"), el("div", { class: "who" }, el("div", { class: "name" }, pressInfo.invitation.title),
-        el("div", { class: "sub" }, t("pressInvite")))) : null;
+        el("div", { class: "sub" }, (pressInfo.journalist || {}).name || ""))) : null;
   const groupRows = [el("div", { class: "section" }, t("groups")),
     groups.groups.map(g => el("div", { class: "person", onclick: () => openGroup(g.id) },
       el("div", { class: "avatar av-txt" }, "👥"),
@@ -401,16 +401,17 @@ async function showFeed() {
 
 // --- press conference ------------------------------------------------------------
 let pressTimer = null, pressKey = null;
-async function leavePress() {
-  if (!confirm(t("pressLeaveAsk"))) return;
-  try { await api("/api/press/leave", {}); } catch (e) { banner(e.message, true); }
-  pressKey = null;
-}
-async function startPress() {
-  const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("pressStarting")));
-  try { const r = await api("/api/press/start", {}); if (!r.ok) { banner(r.error || t("pressFail"), true); return showHome(); } }
-  catch (e) { banner(e.message, true); return showHome(); }
-  openPress();
+function leavePress() {  // FM answers the rest neutrally, as when leaving early; asks first, with a way back
+  const main = $("main");
+  const box = el("div", { class: "confirm" },
+    el("div", { class: "q" }, t("pressLeaveAsk")),
+    el("div", { class: "foot" },
+      el("button", { type: "button", class: "danger", onclick: async () => {
+        box.replaceChildren(el("div", { class: "empty" }, t("pressLeaving")));
+        try { const r = await api("/api/press/leave", {}); if (r.error) banner(r.error, true); } catch (e) { banner(e.message, true); }
+        box.remove(); pressKey = null; } }, t("pressLeaveYes")),
+      el("button", { type: "button", onclick: () => box.remove() }, t("back"))));
+  main.prepend(box);
 }
 async function openPress() {
   view = "press"; current = null; setHeader(t("press"), false);
@@ -421,6 +422,15 @@ async function openPress() {
     if (view !== "press") { clearInterval(pressTimer); pressTimer = null; return; }
     let s;
     try { s = await api("/api/press"); } catch (e) { return; }
+    if (!s.active && s.dismissed) {  // this question is being answered with FM's own options: a way back to typing
+      if (pressKey === "dismissed") return;
+      pressKey = "dismissed";
+      main.replaceChildren(el("div", { class: "press" },
+        el("div", { class: "section" }, t("pressNativeOn")),
+        el("div", { class: "q" }, s.question || ""),
+        el("div", { class: "foot" }, el("button", { type: "button", onclick: async () => { await api("/api/press/resume", {}); pressKey = null; } }, t("pressTypeAgain")))));
+      return;
+    }
     if (!s.active && s.finished && !s.background) {  // a background press conference is over: what was said
       if (pressKey === "finished") return;
       pressKey = "finished";
@@ -437,7 +447,7 @@ async function openPress() {
       if (pressKey !== "waiting") {
         pressKey = "waiting";
         main.replaceChildren(el("div", { class: "empty" }, t("pressNext"),
-          s.background ? el("div", { class: "foot", style: "margin-top:12px" }, el("button", { type: "button", onclick: leavePress }, t("pressLeave"))) : null));
+          null));
       }
       return;
     }
@@ -478,9 +488,9 @@ async function openPress() {
           el("div", { class: "sub" }, j.outlet), el("div", { class: "mood bl" }, s.body_language || ""))),
       el("div", { class: "q" + (s.ready ? "" : " pending") }, s.ready ? s.question : t("pressWait")),
       log, form,
-      el("div", { class: "foot" }, left, s.background
-        ? el("button", { type: "button", onclick: leavePress }, t("pressLeave"))
-        : el("button", { type: "button", onclick: async () => { await api("/api/press/dismiss", {}); } }, t("pressNative")))));
+      el("div", { class: "foot" }, left,
+        el("button", { type: "button", onclick: async () => { await api("/api/press/dismiss", {}); pressKey = null; } }, t("pressNative")),
+        el("button", { type: "button", onclick: leavePress }, t("pressLeave")))));
     if (s.ready) input.focus();
   };
   await render();

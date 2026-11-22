@@ -309,10 +309,8 @@ def make_handler(engine: Engine):
                     return self._json(200, {"ok": True})
                 if method == "GET" and path == "/api/press":
                     return self._press_state()
-                if method == "POST" and path == "/api/press/start":  # FM's press conference, held in the background
-                    return self._json(200, engine.press.background_open(engine.careers.current()))
-                if method == "POST" and path == "/api/press/leave":
-                    return self._json(200, engine.press.background_close(engine.careers.current(), early=True))
+                if method == "POST" and path == "/api/press/leave":  # leave FM's press conference early
+                    return self._json(200, engine.press.leave_early(engine.careers.current()))
                 if method == "POST" and path == "/api/press/finished":
                     engine.press.finished = None
                     return self._json(200, {"ok": True})
