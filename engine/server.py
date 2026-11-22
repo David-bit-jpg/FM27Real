@@ -146,12 +146,15 @@ def make_handler(engine: Engine):
             pass
 
         def _send(self, status: int, body: bytes, content_type: str) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):  # the panel gave up waiting; nothing to do
+                pass
 
         def _json(self, status: int, obj) -> None:
             self._send(status, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
