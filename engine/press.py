@@ -69,6 +69,7 @@ class PressRoom:
         self.error = ""
         self.journalists: dict[str, dict] = {}
         self.conference: tuple[str, list[dict]] = ("", [])  # (dialog target, this conference's Q&As)
+        self.positions: tuple[str, list[str]] = ("", [])    # (game date, "name: position" for the first team)
 
     # --- state -------------------------------------------------------------------
     def _sync(self) -> dict | None:
@@ -132,6 +133,21 @@ class PressRoom:
             if self.key:
                 self.dismissed.add(self.key)
 
+    def _squad_positions(self, career: Career) -> list[str]:
+        """Every first-team player's position (FM's own wording), read once per game day."""
+        if self.positions[0] != career.date:
+            lines = []
+            try:
+                for ref in self.bridge.team(career.team_id)["squad"]:
+                    raw = self.bridge.query(ref, ["eman", "SspP"])
+                    name, pos = (_text(raw.get("eman")) or "").replace("\u200b", ""), _text(raw.get("SspP")) or ""
+                    if name:
+                        lines.append(f"{name}: {pos}" if pos else name)
+            except BridgeUnavailable:
+                return self.positions[1]
+            self.positions = (career.date, lines)
+        return self.positions[1]
+
     # --- model steps -------------------------------------------------------------------
     def _context(self, career: Career, cur: dict, j: dict) -> str:
         store = career.store
@@ -150,6 +166,9 @@ class PressRoom:
 
 PEOPLE THE QUESTION IS ABOUT:
 {_lines(player_lines)}
+
+FIRST-TEAM POSITIONS (judge every player by his position):
+{_lines(self._squad_positions(career))}
 
 WHAT THE MANAGER SAID IN RECENT PRESS CONFERENCES:
 {_lines(said)}
@@ -176,6 +195,9 @@ word in the context or in the original question. If it is not there, do not ment
 CONFERENCES". If that section is empty, do not claim he said anything.
 - Do not count streaks or compute records yourself; only repeat ones stated in the context.
 - If the context offers nothing relevant, keep close to the original question and only sharpen the wording.
+- Judge players by their position: do not blame defensive midfielders, defenders or goalkeepers for not \
+scoring; for them talk about defending, passing, positioning or their rating. Goals matter mainly for forwards \
+and attacking midfielders.
 - Do not repeat a question or angle already asked in this press conference; if the original question covers \
 the same ground, find a different angle within its subject.
 Keep the same subject as the original question. One or two sentences, in Simplified Chinese. A tabloid is \
@@ -213,7 +235,8 @@ blunter than a broadsheet or broadcaster, but equally bound by the facts."""
             system = f"""You are {j['name']}, a football journalist for {j['outlet'] or 'a media outlet'}, \
 questioning {career.manager_name} ({career.team_name}) at a press conference. Today is {career.date}.
 - Follow up only if the manager clearly dodged the question or contradicted the facts; a clear answer, even a \
-short or unfriendly one, ends the question. Never press on a point already answered in this press conference. \
+short or unfriendly one, ends the question. Never press on a point already answered in this press conference. Judge \
+players by their position (do not expect defensive players to score). \
 ({MAX_FOLLOW_UPS - asked} follow-up(s) left; with none left, follow_up must be false.)
 - reply: your follow-up question, or, when done, a short remark or a note of what you are writing (Simplified \
 Chinese, spoken, short). Only facts stated in the context, the question or the manager's own words; never \
