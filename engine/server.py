@@ -340,6 +340,9 @@ def make_handler(engine: Engine):
                     return self._json(200, {"ok": True})
                 if method == "GET" and path == "/api/feed":
                     return self._feed(bool(query.get("all")))
+                m = re.fullmatch(r"/api/(?:person|messages)/([0-9a-f]{8})", path)
+                if m and m.group(1) == engine.careers.current().manager_id:  # nobody chats with himself
+                    return self._json(400, {"error": "that is you", "code": "self"})
                 m = re.fullmatch(r"/api/person/([0-9a-f]{8})", path)
                 if method == "GET" and m:
                     career = engine.careers.current()
@@ -387,7 +390,7 @@ def make_handler(engine: Engine):
             journalists = {e["payload"]["id"]: e["payload"] for e in career.store.events("journalist", limit=500)
                            if (e["payload"] or {}).get("id")}
             for person_id, last in career.store.recent_threads(40):
-                if person_id.startswith("group:"):
+                if person_id.startswith("group:") or person_id == career.manager_id:
                     continue
                 j = journalists.get(person_id)
                 p = by_id.get(person_id) or ({"id": person_id, "name": j.get("name") or person_id,

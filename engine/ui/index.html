@@ -708,7 +708,7 @@ async function openPerson(id) {
   const main = $("main"); main.replaceChildren(el("div", { class: "empty" }, t("loading")));
   let person, messages;
   try { [person, messages] = await Promise.all([api(`/api/person/${id}`), api(`/api/messages/${id}`)]); banner(""); }
-  catch (e) { main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
+  catch (e) { if (e.code === "self") return showHome(); main.replaceChildren(el("div", { class: "empty" }, e.code === "bridge" ? t("noBridge") : e.message)); return; }
   if (current !== id) return;
   setHeader(person.name, true);
   const log = el("div", { class: "log" });

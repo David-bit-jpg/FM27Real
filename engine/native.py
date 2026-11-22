@@ -96,8 +96,7 @@ class NativeSync:
             seen = self.bridge.events(0)
             self.since = max((e["seq"] for e in seen), default=0)
             return
-        if not self.match_quiet():
-            self._refresh_options()
+        self._refresh_options()
         for ev in self.bridge.events(self.since):
             self.since = max(self.since, ev["seq"])
             if target_pairs(ev.get("target", "")).get(" 011") in MATCH_TYPES:
@@ -125,6 +124,10 @@ class NativeSync:
         if not target:
             return
         now = time.monotonic()
+        # Around a match only a dialog the interface has just opened (e.g. the post-match press conference)
+        # is read; an older one is left alone while FM settles the match.
+        if self.match_quiet() and target == self.speak_target and now >= self.active_until:
+            return
         if target != self.speak_target:
             self.active_until = now + ACTIVE_SECONDS
         elif now - self.speak_checked < (0.5 if now < self.active_until else 5):
