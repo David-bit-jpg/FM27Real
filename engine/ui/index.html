@@ -176,7 +176,7 @@
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const T = {
   zh: { phone: "主教练手机", messages: "消息", groups: "群聊", newGroup: "＋ 新建群聊", groupName: "群名（可不填）", create: "创建",
-        pickMembers: "选择成员", groupTyping: "群里有人在输入…", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
+        pickMembers: "选择成员", groupTyping: "群里有人在输入…", groupsUnavailable: "群聊暂时不可用：请重启引擎（scripts/restart-engine.sh）", refresh: "刷新", me: "我", social: "社交", postPh: "发一条…", post: "发布", reply: "回复", replyPh: "回复…",
         refreshing: "大家正在发帖…", answersLater: "已发出。回复会在之后几个小时里陆续出现。", fullTime: "全场结束", motm: "全场最佳", apps: "出场", matchday: "比赛日", odds: "赔率", homeWin: "主胜", draw: "平", awayWin: "客胜", allComments: "查看全部 N 条评论",
         notifications: "通知", repliedYou: "回复了你", mentionedYou: "提到了你", fanMood: "球迷对你的情绪", noPosts: "还没有帖子。比赛和新闻之后大家会在这里发帖。", sending: "发送中…", inbox: "新消息", opening: "正在打开…", journalist: "记者", press: "新闻发布会", pressWait: "记者正在组织问题…", pressPlaceholder: "直接回答记者…",
         pressNative: "用 FM 原版选项回答这题", pressSent: "已作为 FM 回答提交：", followLeft: "记者还能追问", pressThinking: "记者在记笔记…", pressNext: "等待下一个问题…", feed: "动态", noFeed: "还没有动态。推进一天或踢完一场比赛后会出现。",
@@ -190,7 +190,7 @@ const T = {
         noBridge: "还没读入生涯。读入存档后这里会显示你的球队。", noEngine: "连不上引擎。", modelErr: "模型出错：",
         loading: "加载中…", keyPrivacy: "key 只保存在这台电脑上，只发给你选的提供方。" },
   en: { phone: "Manager's phone", messages: "Messages", groups: "Group chats", newGroup: "+ New group", groupName: "Group name (optional)", create: "Create",
-        pickMembers: "Pick members", groupTyping: "Someone is typing…", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
+        pickMembers: "Pick members", groupTyping: "Someone is typing…", groupsUnavailable: "Group chats unavailable: restart the engine (scripts/restart-engine.sh)", refresh: "Refresh", me: "Me", social: "Social", postPh: "Post something…", post: "Post", reply: "Reply", replyPh: "Reply…",
         refreshing: "People are posting…", answersLater: "Sent. Answers will come in over the next few hours.", fullTime: "Full time", motm: "Player of the match", apps: "Apps", matchday: "Matchday", odds: "Odds", homeWin: "Home", draw: "Draw", awayWin: "Away", allComments: "View all N comments",
         notifications: "Notifications", repliedYou: "replied to you", mentionedYou: "mentioned you", fanMood: "Supporters' mood", noPosts: "No posts yet. People post here after matches and news.", sending: "Sending…", inbox: "New messages", opening: "Opening…", journalist: "Journalist", press: "Press conference", pressWait: "The journalist is preparing the question…", pressPlaceholder: "Answer the journalist…",
         pressNative: "Answer this one with FM's options", pressSent: "Submitted to FM as: ", followLeft: "Follow-ups left", pressThinking: "The journalist is taking notes…", pressNext: "Waiting for the next question…", feed: "Feed", noFeed: "Nothing yet. Stories appear as days pass and matches are played.",
@@ -470,8 +470,15 @@ async function showSocial(skipRefresh) {
   const send = async (body, input) => {
     const text = input.value.trim(); if (!text) return;
     input.disabled = true; input.value = t("sending");
+    if (!body.key) {  // my own post shows at once, before the answers are written
+      const feed = main.querySelector(".feed"), mine = el("div", { class: "post" },
+        el("div", { class: "head" }, authorAvatar({ kind: "manager", name: "我" }), el("div", { class: "who" }, el("span", { class: "nm me" }, t("me")))),
+        el("div", { class: "cap" }, el("span", { class: "tx" }, text)));
+      const anchor = feed && feed.querySelector(".post");
+      if (feed) anchor ? feed.insertBefore(mine, anchor) : feed.append(mine);
+    }
     try { const r = await api("/api/social/reply", { ...body, text }); if (r.answers_in_hours) banner(t("answersLater"));
-      showSocial(true); }
+      await showSocial(true); }
     catch (e) { input.disabled = false; input.value = text; banner(e.message, true); }
   };
   const card = p => {
@@ -508,7 +515,10 @@ async function showSocial(skipRefresh) {
     data.notifications.slice(0, 6).map(n => el("div", { class: "note" }, el("b", {}, n.who), ` ${n.type === "reply" ? t("repliedYou") : t("mentionedYou")}：`, n.text))) : null;
   const status = data.pending && !skipRefresh ? el("div", { class: "moodbar" }, t("refreshing")) : null;
   main.replaceChildren(el("div", { class: "feed" },
-    el("div", { class: "moodbar" }, `${t("fanMood")}：${moodWords(data.fan_mood)}`), notes, compose, status,
+    el("div", { class: "moodbar", style: "display:flex;justify-content:space-between;align-items:center" },
+      el("span", {}, `${t("fanMood")}：${moodWords(data.fan_mood)}`),
+      el("button", { class: "btn", style: "padding:4px 10px;font-size:12px", onclick: () => showSocial() }, t("refresh"))),
+    notes, compose, status,
     data.posts.length ? data.posts.map(card) : el("div", { class: "empty" }, t("noPosts"))));
   if ((data.notifications || []).length) api("/api/social/seen", {}).then(() => setSocialBadge(0)).catch(() => {});
   if (data.pending && !skipRefresh) {
@@ -524,8 +534,14 @@ function setSocialBadge(n) {
 }
 
 // --- group chats -----------------------------------------------------------------
-function newGroup(players) {
+async function newGroup(players) {
   view = "chat"; current = null; setHeader(t("newGroup").replace("＋ ", "").replace("+ ", ""), true);
+  if (!Array.isArray(players) || !players.length) {  // load the squad here if the home page could not
+    $("main").replaceChildren(el("div", { class: "empty" }, t("loading")));
+    try { players = (await api("/api/groups")).players || []; }
+    catch (e) { $("main").replaceChildren(el("div", { class: "empty" }, `${t("groupsUnavailable")} (${e.message})`)); return; }
+    if (!players.length) { $("main").replaceChildren(el("div", { class: "empty" }, t("groupsUnavailable"))); return; }
+  }
   const chosen = new Set();
   const name = el("input", { placeholder: t("groupName") });
   const rows = players.map(p => {
